@@ -134,6 +134,13 @@
       <div id="videoStatus" style="margin-top: 1rem;"></div>
       <video id="videoPlayer" controls style="display: none; margin-top: 1rem; max-width: 100%;"></video>
     </div>
+
+    <div class="tts-section" id="ytSection" style="display: none;">
+      <h2>YouTube SEO</h2>
+      <button type="button" id="ytBtn" class="btn-secondary">Generate YouTube Metadata</button>
+      <div id="ytStatus" style="margin-top: 1rem;"></div>
+      <div id="ytOutput" style="display: none; margin-top: 1rem;"></div>
+    </div>
   </div>
 
   <script>
@@ -171,6 +178,10 @@
     const generateVideoBtn = document.getElementById('generateVideoBtn');
     const videoStatus = document.getElementById('videoStatus');
     const videoPlayer = document.getElementById('videoPlayer');
+    const ytSection = document.getElementById('ytSection');
+    const ytBtn = document.getElementById('ytBtn');
+    const ytStatus = document.getElementById('ytStatus');
+    const ytOutput = document.getElementById('ytOutput');
 
     function showError(msg) {
       errorDiv.textContent = msg;
@@ -205,6 +216,8 @@
             outputSection.style.display = 'block';
             ttsSection.style.display = 'block';
             subtitleSection.style.display = 'block';
+            ytSection.style.display = 'block';
+            loadYtMetadata();
           }
           if (data.data.audio) {
             audioPlayer.src = `data:audio/wav;base64,${data.data.audio}`;
@@ -220,8 +233,10 @@
             imagePromptsOutput.style.display = 'block';
             imagesSection.style.display = 'block';
             videoSection.style.display = 'block';
+            ytSection.style.display = 'block';
             loadImagesStatus();
             loadVideoStatus();
+            loadYtMetadata();
           }
           if (data.data.images) {
             renderImages(data.data.images);
@@ -472,6 +487,7 @@
           imagePromptsOutput.style.display = 'block';
           imagesSection.style.display = 'block';
           videoSection.style.display = 'block';
+          ytSection.style.display = 'block';
           saveImagePrompts(data.prompts);
         } else {
           showError(data.error || 'Image prompts generation failed');
@@ -546,6 +562,8 @@
           videoStatus.textContent = 'Video generated successfully!';
           videoPlayer.src = data.videoUrl;
           videoPlayer.style.display = 'block';
+          ytSection.style.display = 'block';
+          loadYtMetadata();
         } else {
           showError(data.error || 'Video generation failed');
           videoStatus.textContent = 'Error: ' + (data.error || 'Failed');
@@ -571,6 +589,55 @@
         console.error('Failed to load video status:', e);
       }
     }
+
+    async function loadYtMetadata() {
+      try {
+        const res = await fetch(`/api/project/${projectId}`);
+        const data = await res.json();
+        if (data.success && data.data.ytMetadata) {
+          ytOutput.innerHTML = `<pre style="background:#f8f8f8;padding:1rem;border-radius:8px;white-space:pre-wrap;">${data.data.ytMetadata}</pre>`;
+          ytOutput.style.display = 'block';
+        }
+      } catch (e) {
+        console.error('Failed to load yt metadata:', e);
+      }
+    }
+
+    ytBtn.addEventListener('click', async () => {
+      ytBtn.disabled = true;
+      ytBtn.textContent = 'Generating...';
+      ytStatus.textContent = 'Creating YouTube metadata...';
+      ytOutput.style.display = 'none';
+
+      try {
+        const res = await fetch('/api/youtube-metadata', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ story: outputTextarea.value })
+        });
+        const data = await res.json();
+
+        if (data.success) {
+          ytStatus.textContent = 'YouTube metadata generated!';
+          ytOutput.innerHTML = `<pre style="background:#f8f8f8;padding:1rem;border-radius:8px;white-space:pre-wrap;">${data.output}</pre>`;
+          ytOutput.style.display = 'block';
+          
+          await fetch(`/api/project/${projectId}/yt-metadata`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content: data.output })
+          });
+        } else {
+          showError(data.error || 'Failed');
+          ytStatus.textContent = 'Error: ' + (data.error || 'Failed');
+        }
+      } catch (e) {
+        showError('Request failed: ' + e.message);
+      } finally {
+        ytBtn.disabled = false;
+        ytBtn.textContent = 'Generate YouTube Metadata';
+      }
+    });
 
     const initProjectId = getQueryParam('projectId');
     if (initProjectId) {

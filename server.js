@@ -3,6 +3,7 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import { promises as fsPromises } from 'fs';
+import os from 'os';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { generateText } from 'ai';
 import { SarvamAIClient } from 'sarvamai';
@@ -10,13 +11,15 @@ import OpenAI from 'openai';
 import { fileURLToPath } from 'url';
 import ffmpeg from 'fluent-ffmpeg';
 
+ffmpeg.setFfmpegPath('/usr/bin/ffmpeg');
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-const STORAGE_ROOT = process.env.STORAGE_ROOT_DIR || './storage';
+const STORAGE_ROOT = path.resolve(process.env.STORAGE_ROOT_DIR || './storage');
 const COMFY_URL = process.env.COMFY_URL || '';
 const COMFY_WORKFLOW = process.env.COMFY_WORKFLOW || '/media/hyper8/HYPER/Downloads/comfy-workflows/flux-kelin-gguf2.api.json';
 const OPENROUTER_IMAGE_MODEL = process.env.OPENROUTER_IMAGE_MODEL || 'black-forest-labs/flux.2-klein-4b';
@@ -64,6 +67,24 @@ async function downloadWithRetry(client, imageInfo, outputPath, retries = 3) {
 const SYSTEM_PROMPT_SSML = `You are an expert dialogue and narration writer for text-to-speech, specializing in playful, short-form storytelling for children aged 3–7 and their parents. When a story is provided, you understand its tone, rhythm, and emotions, then write lively, engaging, and easy-to-follow narration and dialogues in modern North Indian Hindi — natural for listeners from UP, Bihar, and nearby regions. Avoid formal or literary Hindi; keep it conversational, fun, and full of energy, crafted for YouTube Shorts so it instantly captures attention and keeps both kids and parents entertained. You can simplify, rephrase, or slightly adapt the story to make it short-worthy and engaging, while preserving the core meaning and emotion. Your output must be valid SSML compatible with Google Text-to-Speech, using natural yet energetic pacing, expressive pauses, prosody, and emphasis. Include natural, fitting sound expressions (like "खौं… खौं…", "गर्र…" or "ऊँ…") when they enhance storytelling — never forced. Maintain a bright, expressive tone with humor, warmth, and curiosity, ensuring the narration feels lively and shareable.`;
 
 const SYSTEM_PROMPT_NO_SSML = `You are an expert dialogue and narration writer for text-to-speech, specializing in playful, short-form storytelling for children aged 3–7 and their parents. When a story is provided, you understand its tone, rhythm, and emotions, then write lively, engaging, and easy-to-follow narration and dialogues in modern North Indian Hindi — natural for listeners from UP, Bihar, and nearby regions. Avoid formal or literary Hindi; keep it conversational, fun, and full of energy, crafted for YouTube Shorts so it instantly captures attention and keeps both kids and parents entertained. You can simplify, rephrase, or slightly adapt the story to make it short-worthy and engaging, while preserving the core meaning and emotion. Do NOT use any SSML tags. Just return plain text with natural storytelling. Maintain a bright, expressive tone with humor, warmth, and curiosity, ensuring the narration feels lively and shareable.`;
+
+const SYSTEM_PROMPT_YT = `You analyze a provided story or SRT and create YouTube Shorts metadata optimized for discoverability among North Indian Hindi-speaking kids and their parents. You produce 2-3 catchy, safe, kid-friendly title options mixing Hindi and English, a concise description, trending hashtags, and comma-separated tags. Always include relevant, high-performing hashtags in both the description and metadata that match the story's theme, moral, or festival context. You research current YouTube Shorts and Indian kids content trends to select high-performing Hindi and Hinglish keywords, festivals, morals, and curiosity hooks, while avoiding unsafe, scary, or inappropriate phrasing. You keep language simple, positive, culturally relevant, and appealing to parents. When details are missing, infer responsibly without altering the story's meaning. Be concise, SEO-aware, and platform-specific. Use Hindi-English mix (Hinglish) by default. Do not include policy-violating or misleading claims. Your goal is to make the reel reachable to the widest audience possible. Thumbnails are not included since YouTube Shorts auto-select them.
+
+IMPORTANT: Return plain text, NOT JSON. Format the output as:
+
+TITLES:
+- Title 1
+- Title 2
+- Title 3
+
+DESCRIPTION:
+[Your description here]
+
+HASHTAGS:
+#tag1 #tag2 #tag3
+
+TAGS:
+tag1, tag2, tag3`;
 
 const SYSTEM_PROMPT_IMAGE = `You are an expert screenplay writer and visual planner for children's stories.
 
@@ -152,6 +173,7 @@ app.get('/api/project/:projectId', async (req, res) => {
     const audioPath = path.join(projectDir, 'audio.wav');
     const subtitlePath = path.join(projectDir, 'subtitle.srt');
     const imagePromptsPath = path.join(projectDir, 'image-prompts.json');
+    const ytMetadataPath = path.join(projectDir, 'yt-metadata.txt');
 
     let data = { projectId: req.params.projectId };
 
@@ -160,6 +182,7 @@ app.get('/api/project/:projectId', async (req, res) => {
     try { data.audio = await fsPromises.readFile(audioPath, 'base64'); } catch { }
     try { data.subtitle = await fsPromises.readFile(subtitlePath, 'utf8'); } catch { }
     try { data.imagePrompts = await fsPromises.readFile(imagePromptsPath, 'utf8'); } catch { }
+    try { data.ytMetadata = await fsPromises.readFile(ytMetadataPath, 'utf8'); } catch { }
 
     res.json({ success: true, data });
   } catch (error) {
@@ -221,6 +244,19 @@ app.post('/api/project/:projectId/image-prompts', async (req, res) => {
     const projectDir = await getProjectDir(req.params.projectId);
     if (content) {
       await fsPromises.writeFile(path.join(projectDir, 'image-prompts.json'), content);
+    }
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/project/:projectId/yt-metadata', async (req, res) => {
+  try {
+    const { content } = req.body;
+    const projectDir = await getProjectDir(req.params.projectId);
+    if (content) {
+      await fsPromises.writeFile(path.join(projectDir, 'yt-metadata.txt'), content);
     }
     res.json({ success: true });
   } catch (error) {
@@ -358,6 +394,33 @@ app.post('/api/image-prompts', async (req, res) => {
     res.json({ success: true, prompts: result.text.trim() });
   } catch (error) {
     console.error('Error generating image prompts:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/youtube-metadata', async (req, res) => {
+  const { story, subtitle } = req.body;
+
+  if (!story && !subtitle) {
+    return res.status(400).json({ success: false, error: 'Story or subtitle is required' });
+  }
+
+  const selectedModel = DEFAULT_MODEL;
+  if (!selectedModel) {
+    return res.status(400).json({ success: false, error: 'No model selected' });
+  }
+
+  try {
+    const input = story || subtitle;
+    const result = await generateText({
+      model: openrouter.chat(selectedModel),
+      system: SYSTEM_PROMPT_YT,
+      prompt: input,
+    });
+
+    res.json({ success: true, output: result.text.trim() });
+  } catch (error) {
+    console.error('Error generating YouTube metadata:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -644,26 +707,45 @@ const ZOOM_RATE = 0.08;
 
 function parseSRT(data) {
   const segments = [];
-  const blocks = data.trim().split(/\n\s*\n/);
-  for (const block of blocks) {
-    const lines = block.split('\n');
-    if (lines.length >= 2) {
-      const timeMatch = lines[1].match(/(\d{1,2}:\d{2}:\d{2}[.,]\d{3}) --> (\d{1,2}:\d{2}:\d{2}[.,]\d{3})/);
-      if (timeMatch) {
-        segments.push({
-          startTime: timeMatch[1].replace(',', '.'),
-          endTime: timeMatch[2].replace(',', '.'),
-          text: lines.slice(2).join('\n'),
-        });
+  const regex = /(\d{1,2}:\d{2}:\d{2}[.,]\d{3}) --> (\d{1,2}:\d{2}:\d{2}[.,]\d{3})/g;
+  let match;
+  const lines = data.split('\n');
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i].trim();
+    const timeMatch = line.match(/(\d{1,2}:\d{2}:\d{2}[.,]\d{3}) --> (\d{1,2}:\d{2}:\d{2}[.,]\d{3})/);
+    if (timeMatch) {
+      const textLines = [];
+      i++;
+      while (i < lines.length) {
+        const nextLine = lines[i].trim();
+        if (!nextLine || /^\d+$/.test(nextLine)) {
+          i++;
+          continue;
+        }
+        if (/^\d{1,2}:\d{2}:\d{2}[.,]\d{3} --> \d{1,2}:\d{2}:\d{2}[.,]\d{3}/.test(nextLine)) {
+          break;
+        }
+        textLines.push(nextLine);
+        i++;
       }
+      segments.push({
+        startTime: timeMatch[1].replace(',', '.'),
+        endTime: timeMatch[2].replace(',', '.'),
+        text: textLines.join(' '),
+      });
+    } else {
+      i++;
     }
   }
   return segments;
 }
 
 function srtTimeToMs(timeStr) {
-  const parts = timeStr.split(/[:,]/);
-  return parseInt(parts[0]) * 3600000 + parseInt(parts[1]) * 60000 + parseInt(parts[2]) * 1000 + parseInt(parts[3]);
+  const parts = timeStr.split(':');
+  const [h, m, s] = parts;
+  const sec = s.split('.');
+  return (parseInt(h) * 3600 + parseInt(m) * 60 + parseInt(sec[0])) * 1000 + parseInt(sec[1]);
 }
 
 async function createImageClip(scene, index, totalScenes, tempDir, imageDir) {
@@ -760,14 +842,17 @@ async function createStoryVideo(projectId, onProgress) {
   const audioPath = path.join(projectDir, 'audio.wav');
   const srtPath = path.join(projectDir, 'subtitle.srt');
   const outputPath = path.join(projectDir, 'video.mp4');
-  const tempDir = path.join(__dirname, 'temp_clips_' + Date.now());
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'story-video-'));
 
-  if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+  console.log('Video temp dir:', tempDir);
 
   try {
     const srtContent = fs.readFileSync(srtPath, 'utf8');
+    console.log('SRT content length:', srtContent.length);
     const srtData = parseSRT(srtContent);
+    console.log('Parsed SRT segments:', srtData.length);
     const images = fs.readdirSync(imageDir).filter(f => /\.(png|jpg|jpeg|webp)$/i.test(f)).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    console.log('Found images:', images.length);
 
     const scenesData = srtData.map((item, index) => {
       let start_ms = srtTimeToMs(item.startTime);
