@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Story Generator - Hindi TTS</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; max-width: 800px; margin: 0 auto; padding: 2rem; }
+    h1 { margin-bottom: 1.5rem; }
+    form { display: flex; flex-direction: column; gap: 1rem; }
+    label { font-weight: 600; }
+    textarea { min-height: 200px; padding: 1rem; border: 1px solid #ccc; border-radius: 8px; font-size: 1rem; resize: vertical; }
+    button { padding: 1rem 2rem; background: #2563eb; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 1rem; }
+    button:hover { background: #1d4ed8; }
+    button:disabled { background: #93c5fd; cursor: not-allowed; }
+    .output { margin-top: 2rem; }
+    .output h2 { margin-bottom: 1rem; }
+    textarea.output { background: #f8f8f8; }
+  </style>
+</head>
+<body>
+  <h1>Story Generator - Hindi TTS</h1>
+  <form method="POST" action="/story">
+    <label for="story">Enter Hindi Story:</label>
+    <textarea name="story" id="story" placeholder="यहाँ अपनी कहानी लिखें..." required><%= story || '' %></textarea>
+    <button type="submit" <%= loading ? 'disabled' : '' %>><%= loading ? 'Generating...' : 'Generate SSML' %></button>
+  </form>
+  <% if (output) { %>
+  <div class="output">
+    <h2>Generated SSML:</h2>
+    <textarea class="output" readonly><%= output %></textarea>
+  </div>
+  <% } %>
+</body>
+</html>

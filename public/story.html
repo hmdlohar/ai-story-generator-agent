@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Story Generator - Hindi TTS</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; max-width: 800px; margin: 0 auto; padding: 2rem; }
+    h1 { margin-bottom: 1.5rem; }
+    h2 { margin-top: 1.5rem; margin-bottom: 1rem; font-size: 1.25rem; }
+    .form-group { display: flex; flex-direction: column; gap: 0.5rem; }
+    .form-row { display: flex; gap: 1rem; }
+    .form-row > * { flex: 1; }
+    form { display: flex; flex-direction: column; gap: 1rem; }
+    label { font-weight: 600; }
+    textarea { min-height: 200px; padding: 1rem; border: 1px solid #ccc; border-radius: 8px; font-size: 1rem; resize: vertical; width: 100%; }
+    select { padding: 0.5rem; border: 1px solid #ccc; border-radius: 8px; font-size: 1rem; width: 100%; }
+    input[type="text"] { padding: 0.5rem; border: 1px solid #ccc; border-radius: 8px; font-size: 1rem; }
+    button { padding: 1rem 2rem; background: #2563eb; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 1rem; }
+    button:hover { background: #1d4ed8; }
+    button:disabled { background: #93c5fd; cursor: not-allowed; }
+    .btn-secondary { background: #059669; }
+    .btn-secondary:hover { background: #047857; }
+    .output { margin-top: 2rem; }
+    .output h2 { margin-bottom: 1rem; }
+    textarea.output { background: #f8f8f8; min-height: 300px; width: 100%; }
+    .error { color: #dc2626; padding: 1rem; background: #fef2f2; border-radius: 8px; }
+    .tts-section { background: #f0f9ff; padding: 1rem; border-radius: 8px; margin-top: 1rem; }
+    audio { width: 100%; margin-top: 1rem; }
+    .checkbox-label { display: flex; align-items: center; gap: 0.5rem; font-weight: 400; }
+    .checkbox-label input { width: auto; }
+    #projectSetup { background: #f0fdf4; padding: 2rem; border-radius: 8px; text-align: center; }
+    #mainApp { display: none; }
+    .project-badge { display: inline-block; background: #e0e7ff; padding: 0.25rem 0.75rem; border-radius: 4px; font-size: 0.875rem; margin-bottom: 1rem; }
+  </style>
+</head>
+<body>
+  <div id="projectSetup">
+    <h2>Enter Project ID</h2>
+    <p style="margin-bottom: 1rem; color: #666;">Your project data will be saved locally.</p>
+    <form id="projectForm">
+      <input type="text" id="projectIdInput" placeholder="e.g., story-001" required style="width: 300px;">
+      <button type="submit">Start Project</button>
+    </form>
+  </div>
+
+  <div id="mainApp">
+    <span class="project-badge" id="projectBadge"></span>
+    <h1>Story Generator - Hindi TTS</h1>
+    <form id="storyForm">
+      <div class="form-group">
+        <label for="model">Select AI Model:</label>
+        <select name="model" id="model"></select>
+      </div>
+      <div class="form-group">
+        <label class="checkbox-label">
+          <input type="checkbox" name="ssml" id="ssml">
+          Generate SSML
+        </label>
+      </div>
+      <div class="form-group">
+        <label for="story">Enter Hindi Story:</label>
+        <textarea name="story" id="story" placeholder="यहाँ अपनी कहानी लिखें..." required></textarea>
+      </div>
+      <button type="submit" id="submitBtn">Generate</button>
+    </form>
+    <div id="error" class="error" style="display: none;"></div>
+    <div class="output" id="outputSection" style="display: none;">
+      <h2 id="outputTitle">Generated Output:</h2>
+      <textarea class="output" id="output" readonly></textarea>
+    </div>
+
+    <div class="tts-section" id="ttsSection" style="display: none;">
+      <h2>Text to Speech</h2>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="speaker">Speaker:</label>
+          <select id="speaker">
+            <option value="shubh">Shubh (Male)</option>
+            <option value="manan">Manan (Male)</option>
+            <option value="aditya">Aditya (Male)</option>
+            <option value="rahul">Rahul (Male)</option>
+            <option value="ritu" selected>Ritu (Female)</option>
+            <option value="priya">Priya (Female)</option>
+            <option value="neha">Neha (Female)</option>
+            <option value="ishita">Ishita (Female)</option>
+            <option value="shreya">Shreya (Female)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="language">Language:</label>
+          <select id="language">
+            <option value="hi-IN" selected>Hindi</option>
+            <option value="en-IN">English</option>
+          </select>
+        </div>
+      </div>
+      <button type="button" id="ttsBtn" class="btn-secondary">Generate Audio</button>
+      <audio id="audioPlayer" controls style="display: none;"></audio>
+    </div>
+
+    <div class="tts-section" id="subtitleSection" style="display: none;">
+      <h2>Subtitle (SRT)</h2>
+      <button type="button" id="subtitleBtn" class="btn-secondary">Generate Subtitle</button>
+      <textarea class="output" id="subtitleOutput" readonly style="display: none;"></textarea>
+    </div>
+
+    <div class="tts-section" id="imagePromptsSection" style="display: none;">
+      <h2>Image Prompts</h2>
+      <button type="button" id="imagePromptsBtn" class="btn-secondary">Generate Image Prompts</button>
+      <textarea class="output" id="imagePromptsOutput" readonly style="display: none;"></textarea>
+    </div>
+
+    <div class="tts-section" id="imagesSection" style="display: none;">
+      <h2>Images</h2>
+      <div class="form-row" style="margin-bottom: 1rem;">
+        <div class="form-group">
+          <label for="imageProvider">Provider:</label>
+          <select id="imageProvider">
+            <option value="comfy">ComfyUI</option>
+            <option value="openrouter">OpenRouter (Flux)</option>
+          </select>
+        </div>
+      </div>
+      <button type="button" id="generateImagesBtn" class="btn-secondary">Generate Images</button>
+      <div id="imagesStatus" style="margin-top: 1rem;"></div>
+      <div id="imagesGallery" style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 1rem;"></div>
+    </div>
+
+    <div class="tts-section" id="videoSection" style="display: none;">
+      <h2>Video</h2>
+      <button type="button" id="generateVideoBtn" class="btn-secondary">Generate Video</button>
+      <div id="videoStatus" style="margin-top: 1rem;"></div>
+      <video id="videoPlayer" controls style="display: none; margin-top: 1rem; max-width: 100%;"></video>
+    </div>
+  </div>
+
+  <script>
+    let projectId = null;
+
+    const projectSetup = document.getElementById('projectSetup');
+    const mainApp = document.getElementById('mainApp');
+    const projectForm = document.getElementById('projectForm');
+    const projectIdInput = document.getElementById('projectIdInput');
+    const projectBadge = document.getElementById('projectBadge');
+
+    const modelSelect = document.getElementById('model');
+    const ssmlCheckbox = document.getElementById('ssml');
+    const outputTitle = document.getElementById('outputTitle');
+    const form = document.getElementById('storyForm');
+    const submitBtn = document.getElementById('submitBtn');
+    const errorDiv = document.getElementById('error');
+    const outputSection = document.getElementById('outputSection');
+    const outputTextarea = document.getElementById('output');
+    const ttsSection = document.getElementById('ttsSection');
+    const subtitleSection = document.getElementById('subtitleSection');
+    const ttsBtn = document.getElementById('ttsBtn');
+    const subtitleBtn = document.getElementById('subtitleBtn');
+    const audioPlayer = document.getElementById('audioPlayer');
+    const subtitleOutput = document.getElementById('subtitleOutput');
+    const imagePromptsSection = document.getElementById('imagePromptsSection');
+    const imagePromptsBtn = document.getElementById('imagePromptsBtn');
+    const imagePromptsOutput = document.getElementById('imagePromptsOutput');
+    const imagesSection = document.getElementById('imagesSection');
+    const generateImagesBtn = document.getElementById('generateImagesBtn');
+    const imagesStatus = document.getElementById('imagesStatus');
+    const imagesGallery = document.getElementById('imagesGallery');
+    const imageProvider = document.getElementById('imageProvider');
+    const videoSection = document.getElementById('videoSection');
+    const generateVideoBtn = document.getElementById('generateVideoBtn');
+    const videoStatus = document.getElementById('videoStatus');
+    const videoPlayer = document.getElementById('videoPlayer');
+
+    function showError(msg) {
+      errorDiv.textContent = msg;
+      errorDiv.style.display = 'block';
+    }
+
+    function hideError() {
+      errorDiv.style.display = 'none';
+    }
+
+    function getQueryParam(name) {
+      const params = new URLSearchParams(window.location.search);
+      return params.get(name);
+    }
+
+    function setQueryParam(name, value) {
+      const url = new URL(window.location.href);
+      url.searchParams.set(name, value);
+      window.history.pushState({}, '', url);
+    }
+
+    async function loadProjectData() {
+      try {
+        const res = await fetch(`/api/project/${projectId}`);
+        const data = await res.json();
+        if (data.success && data.data) {
+          if (data.data.input) {
+            document.getElementById('story').value = data.data.input;
+          }
+          if (data.data.story) {
+            outputTextarea.value = data.data.story;
+            outputSection.style.display = 'block';
+            ttsSection.style.display = 'block';
+            subtitleSection.style.display = 'block';
+          }
+          if (data.data.audio) {
+            audioPlayer.src = `data:audio/wav;base64,${data.data.audio}`;
+            audioPlayer.style.display = 'block';
+          }
+          if (data.data.subtitle) {
+            subtitleOutput.value = data.data.subtitle;
+            subtitleOutput.style.display = 'block';
+            imagePromptsSection.style.display = 'block';
+          }
+          if (data.data.imagePrompts) {
+            imagePromptsOutput.value = data.data.imagePrompts;
+            imagePromptsOutput.style.display = 'block';
+            imagesSection.style.display = 'block';
+            videoSection.style.display = 'block';
+            loadImagesStatus();
+            loadVideoStatus();
+          }
+          if (data.data.images) {
+            renderImages(data.data.images);
+          }
+        }
+      } catch (e) {
+        console.error('Failed to load project data:', e);
+      }
+    }
+
+    async function saveInput() {
+      if (!projectId) return;
+      const content = document.getElementById('story').value;
+      await fetch(`/api/project/${projectId}/input`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content })
+      });
+    }
+
+    async function saveStory() {
+      if (!projectId) return;
+      await fetch(`/api/project/${projectId}/story`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: outputTextarea.value })
+      });
+    }
+
+    async function saveAudio(base64Audio) {
+      if (!projectId) return;
+      await fetch(`/api/project/${projectId}/audio`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: base64Audio })
+      });
+    }
+
+    async function saveSubtitle(subtitle) {
+      if (!projectId) return;
+      await fetch(`/api/project/${projectId}/subtitle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: subtitle })
+      });
+    }
+
+    async function saveImagePrompts(prompts) {
+      if (!projectId) return;
+      await fetch(`/api/project/${projectId}/image-prompts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: prompts })
+      });
+    }
+
+    async function loadModels() {
+      try {
+        const res = await fetch('/api/models');
+        const data = await res.json();
+        if (data.models && data.models.length > 0) {
+          data.models.forEach(m => {
+            const opt = document.createElement('option');
+            opt.value = m;
+            opt.textContent = m;
+            modelSelect.appendChild(opt);
+          });
+        } else {
+          showError('No models available. Please check AVAILABLE_MODELS in environment.');
+        }
+      } catch (e) {
+        showError('Failed to load models: ' + e.message);
+      }
+    }
+
+    async function loadImagesStatus() {
+      try {
+        const res = await fetch(`/api/project/${projectId}/images-status`);
+        const data = await res.json();
+        if (data.success) {
+          imagesStatus.textContent = `Generated: ${data.completed} / ${data.total}`;
+          renderImages(data.images);
+        }
+      } catch (e) {
+        console.error('Failed to load images status:', e);
+      }
+    }
+
+    function renderImages(images) {
+      imagesGallery.innerHTML = '';
+      images.forEach(img => {
+        const imgEl = document.createElement('img');
+        imgEl.src = img.url;
+        imgEl.style.maxWidth = '150px';
+        imgEl.style.maxHeight = '150px';
+        imgEl.style.objectFit = 'cover';
+        imgEl.style.borderRadius = '8px';
+        imagesGallery.appendChild(imgEl);
+      });
+    }
+
+    projectForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      projectId = projectIdInput.value.trim();
+      if (!projectId) return;
+      setQueryParam('projectId', projectId);
+      projectSetup.style.display = 'none';
+      mainApp.style.display = 'block';
+      projectBadge.textContent = `Project: ${projectId}`;
+      loadModels();
+      loadProjectData();
+    });
+
+    document.getElementById('story').addEventListener('input', saveInput);
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      hideError();
+      outputSection.style.display = 'none';
+      ttsSection.style.display = 'none';
+      subtitleSection.style.display = 'none';
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Generating...';
+
+      const story = document.getElementById('story').value;
+      const model = modelSelect.value;
+      const ssml = ssmlCheckbox.checked;
+
+      outputTitle.textContent = ssml ? 'Generated SSML:' : 'Generated Story:';
+
+      try {
+        const res = await fetch('/api/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ story, model, ssml })
+        });
+        const data = await res.json();
+
+        if (data.success) {
+          outputTextarea.value = data.output;
+          outputSection.style.display = 'block';
+          ttsSection.style.display = 'block';
+          subtitleSection.style.display = 'block';
+          saveStory();
+        } else {
+          showError(data.error || 'Generation failed');
+        }
+      } catch (e) {
+        showError('Request failed: ' + e.message);
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Generate';
+      }
+    });
+
+    ttsBtn.addEventListener('click', async () => {
+      const text = outputTextarea.value;
+      if (!text) return;
+
+      ttsBtn.disabled = true;
+      ttsBtn.textContent = 'Generating Audio...';
+      audioPlayer.style.display = 'none';
+
+      try {
+        const res = await fetch('/api/tts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            text,
+            speaker: document.getElementById('speaker').value,
+            language: document.getElementById('language').value
+          })
+        });
+        const data = await res.json();
+
+        if (data.success && data.audio) {
+          audioPlayer.src = `data:audio/wav;base64,${data.audio}`;
+          audioPlayer.style.display = 'block';
+          audioPlayer.play();
+          saveAudio(data.audio);
+        } else {
+          showError(data.error || 'TTS generation failed');
+        }
+      } catch (e) {
+        showError('TTS request failed: ' + e.message);
+      } finally {
+        ttsBtn.disabled = false;
+        ttsBtn.textContent = 'Generate Audio';
+      }
+    });
+
+    subtitleBtn.addEventListener('click', async () => {
+      const audioBase64 = audioPlayer.src.split(',')[1];
+      if (!audioBase64) {
+        showError('Please generate audio first');
+        return;
+      }
+
+      subtitleBtn.disabled = true;
+      subtitleBtn.textContent = 'Generating Subtitle...';
+      subtitleOutput.style.display = 'none';
+
+      try {
+        const res = await fetch('/api/subtitle', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ audio: audioBase64 })
+        });
+        const data = await res.json();
+
+        if (data.success) {
+          subtitleOutput.value = data.subtitle;
+          subtitleOutput.style.display = 'block';
+          imagePromptsSection.style.display = 'block';
+          saveSubtitle(data.subtitle);
+        } else {
+          showError(data.error || 'Subtitle generation failed');
+        }
+      } catch (e) {
+        showError('Subtitle request failed: ' + e.message);
+      } finally {
+        subtitleBtn.disabled = false;
+        subtitleBtn.textContent = 'Generate Subtitle';
+      }
+    });
+
+    imagePromptsBtn.addEventListener('click', async () => {
+      const subtitle = subtitleOutput.value;
+      if (!subtitle) {
+        showError('Please generate subtitle first');
+        return;
+      }
+
+      imagePromptsBtn.disabled = true;
+      imagePromptsBtn.textContent = 'Generating Prompts...';
+      imagePromptsOutput.style.display = 'none';
+
+      try {
+        const res = await fetch('/api/image-prompts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ subtitle })
+        });
+        const data = await res.json();
+
+        if (data.success) {
+          imagePromptsOutput.value = data.prompts;
+          imagePromptsOutput.style.display = 'block';
+          imagesSection.style.display = 'block';
+          videoSection.style.display = 'block';
+          saveImagePrompts(data.prompts);
+        } else {
+          showError(data.error || 'Image prompts generation failed');
+        }
+      } catch (e) {
+        showError('Image prompts request failed: ' + e.message);
+      } finally {
+        imagePromptsBtn.disabled = false;
+        imagePromptsBtn.textContent = 'Generate Image Prompts';
+      }
+    });
+
+    generateImagesBtn.addEventListener('click', async () => {
+      if (!projectId) return;
+
+      generateImagesBtn.disabled = true;
+      generateImagesBtn.textContent = 'Generating Images...';
+
+      const selectedProvider = imageProvider.value;
+      
+      try {
+        let res;
+        if (selectedProvider === 'comfy') {
+          res = await fetch('/api/generate-images', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ projectId, provider: selectedProvider })
+          });
+        } else {
+          res = await fetch('/api/generate-images-openrouter', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ projectId })
+          });
+        }
+        const data = await res.json();
+
+        if (data.success) {
+          imagesStatus.textContent = `Completed: ${data.completed} / ${data.total}`;
+          loadImagesStatus();
+        } else {
+          showError(data.error || 'Image generation failed');
+          if (data.completed !== undefined) {
+            imagesStatus.textContent = `Partial: ${data.completed} / ${data.total}`;
+          }
+        }
+      } catch (e) {
+        showError('Image generation request failed: ' + e.message);
+      } finally {
+        generateImagesBtn.disabled = false;
+        generateImagesBtn.textContent = 'Generate Images';
+      }
+    });
+
+    generateVideoBtn.addEventListener('click', async () => {
+      if (!projectId) return;
+
+      generateVideoBtn.disabled = true;
+      generateVideoBtn.textContent = 'Generating Video...';
+      videoStatus.textContent = 'Creating video from images and audio...';
+      videoPlayer.style.display = 'none';
+
+      try {
+        const res = await fetch('/api/generate-video', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId })
+        });
+        const data = await res.json();
+
+        if (data.success) {
+          videoStatus.textContent = 'Video generated successfully!';
+          videoPlayer.src = data.videoUrl;
+          videoPlayer.style.display = 'block';
+        } else {
+          showError(data.error || 'Video generation failed');
+          videoStatus.textContent = 'Error: ' + (data.error || 'Failed');
+        }
+      } catch (e) {
+        showError('Video generation request failed: ' + e.message);
+      } finally {
+        generateVideoBtn.disabled = false;
+        generateVideoBtn.textContent = 'Generate Video';
+      }
+    });
+
+    async function loadVideoStatus() {
+      try {
+        const res = await fetch(`/api/project/${projectId}/video-status`);
+        const data = await res.json();
+        if (data.success && data.exists) {
+          videoPlayer.src = data.videoUrl;
+          videoPlayer.style.display = 'block';
+          videoStatus.textContent = 'Video ready';
+        }
+      } catch (e) {
+        console.error('Failed to load video status:', e);
+      }
+    }
+
+    const initProjectId = getQueryParam('projectId');
+    if (initProjectId) {
+      projectIdInput.value = initProjectId;
+      projectForm.dispatchEvent(new Event('submit'));
+    }
+  </script>
+</body>
+</html>
