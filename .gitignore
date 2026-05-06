@@ -1,0 +1,9 @@
+node_modules
+.env
+.codex
+output
+public/remotion-assets/
+data/remotion-manifest.json
+out/
+data
+story.txt

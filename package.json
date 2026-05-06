@@ -1,0 +1,28 @@
+{
+  "name": "story-gen",
+  "version": "1.0.0",
+  "description": "",
+  "type": "module",
+  "main": "generateImagePrompt.js",
+  "scripts": {
+    "video:sync-assets": "node scripts/sync-remotion-assets.js",
+    "dev:video": "npm run video:sync-assets && remotion studio src/index.jsx",
+    "video:compositions": "npm run video:sync-assets && remotion compositions src/index.jsx",
+    "video:render": "npm run video:sync-assets && remotion render src/index.jsx StoryVideo out/story.mp4",
+    "story:preview": "node scripts/run-story-project.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@ai-sdk/openai": "^3.0.58",
+    "@remotion/cli": "^4.0.457",
+    "ai": "^6.0.174",
+    "dotenv": "^17.4.2",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5",
+    "remotion": "^4.0.457",
+    "zod": "^4.3.6"
+  }
+}
