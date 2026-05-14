@@ -130,6 +130,16 @@
 
     <div class="tts-section" id="videoSection" style="display: none;">
       <h2>Video</h2>
+      <div class="form-row" style="margin-bottom: 1rem;">
+        <div class="form-group">
+          <label for="videoRenderer">Render Engine:</label>
+          <select id="videoRenderer">
+            <option value="ffmpeg" selected>FFmpeg</option>
+            <option value="remotion">Remotion</option>
+          </select>
+        </div>
+      </div>
+      <button type="button" id="previewRemotionBtn">Preview in Remotion Studio</button>
       <button type="button" id="generateVideoBtn" class="btn-secondary">Generate Video</button>
       <div id="videoStatus" style="margin-top: 1rem;"></div>
       <video id="videoPlayer" controls style="display: none; margin-top: 1rem; max-width: 100%;"></video>
@@ -175,6 +185,8 @@
     const imagesGallery = document.getElementById('imagesGallery');
     const imageProvider = document.getElementById('imageProvider');
     const videoSection = document.getElementById('videoSection');
+    const videoRenderer = document.getElementById('videoRenderer');
+    const previewRemotionBtn = document.getElementById('previewRemotionBtn');
     const generateVideoBtn = document.getElementById('generateVideoBtn');
     const videoStatus = document.getElementById('videoStatus');
     const videoPlayer = document.getElementById('videoPlayer');
@@ -542,19 +554,50 @@
       }
     });
 
+    previewRemotionBtn.addEventListener('click', async () => {
+      if (!projectId) return;
+
+      previewRemotionBtn.disabled = true;
+      previewRemotionBtn.textContent = 'Starting Studio...';
+      videoStatus.textContent = 'Preparing Remotion Studio preview...';
+
+      try {
+        const res = await fetch('/api/remotion-studio', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId })
+        });
+        const data = await res.json();
+
+        if (data.success) {
+          videoStatus.innerHTML = `Remotion Studio is running: <a href="${data.studioUrl}" target="_blank" rel="noreferrer">${data.studioUrl}</a>`;
+          window.open(data.studioUrl, '_blank');
+        } else {
+          showError(data.error || 'Failed to start Remotion Studio');
+          videoStatus.textContent = 'Error: ' + (data.error || 'Failed');
+        }
+      } catch (e) {
+        showError('Remotion Studio request failed: ' + e.message);
+      } finally {
+        previewRemotionBtn.disabled = false;
+        previewRemotionBtn.textContent = 'Preview in Remotion Studio';
+      }
+    });
+
     generateVideoBtn.addEventListener('click', async () => {
       if (!projectId) return;
 
+      const renderer = videoRenderer.value;
       generateVideoBtn.disabled = true;
-      generateVideoBtn.textContent = 'Generating Video...';
-      videoStatus.textContent = 'Creating video from images and audio...';
+      generateVideoBtn.textContent = `Generating with ${renderer === 'remotion' ? 'Remotion' : 'FFmpeg'}...`;
+      videoStatus.textContent = `Creating video with ${renderer === 'remotion' ? 'Remotion' : 'FFmpeg'}...`;
       videoPlayer.style.display = 'none';
 
       try {
         const res = await fetch('/api/generate-video', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ projectId })
+          body: JSON.stringify({ projectId, renderer })
         });
         const data = await res.json();
 

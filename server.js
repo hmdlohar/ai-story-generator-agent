@@ -4,12 +4,14 @@ import path from 'path';
 import fs from 'fs';
 import { promises as fsPromises } from 'fs';
 import os from 'os';
+import { spawn } from 'child_process';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { generateText } from 'ai';
 import { SarvamAIClient } from 'sarvamai';
 import OpenAI from 'openai';
 import { fileURLToPath } from 'url';
 import ffmpeg from 'fluent-ffmpeg';
+import { prepareRemotionProject } from './scripts/remotion-data.js';
 
 ffmpeg.setFfmpegPath('/usr/bin/ffmpeg');
 
@@ -64,9 +66,23 @@ async function downloadWithRetry(client, imageInfo, outputPath, retries = 3) {
   }
 }
 
-const SYSTEM_PROMPT_SSML = `You are an expert dialogue and narration writer for text-to-speech, specializing in playful, short-form storytelling for children aged 3–7 and their parents. When a story is provided, you understand its tone, rhythm, and emotions, then write lively, engaging, and easy-to-follow narration and dialogues in modern North Indian Hindi — natural for listeners from UP, Bihar, and nearby regions. Avoid formal or literary Hindi; keep it conversational, fun, and full of energy, crafted for YouTube Shorts so it instantly captures attention and keeps both kids and parents entertained. You can simplify, rephrase, or slightly adapt the story to make it short-worthy and engaging, while preserving the core meaning and emotion. Your output must be valid SSML compatible with Google Text-to-Speech, using natural yet energetic pacing, expressive pauses, prosody, and emphasis. Include natural, fitting sound expressions (like "खौं… खौं…", "गर्र…" or "ऊँ…") when they enhance storytelling — never forced. Maintain a bright, expressive tone with humor, warmth, and curiosity, ensuring the narration feels lively and shareable.`;
+const SYSTEM_PROMPT_SSML = `You are an expert dialogue and narration writer for text-to-speech, specializing in playful, short-form storytelling for children aged 3–7 and their parents. When a story is provided, you understand its tone, rhythm, and emotions, then write lively, engaging, and easy-to-follow narration and dialogue in modern North Indian Hindi — natural for listeners from UP, Bihar, and nearby regions. Avoid formal or literary Hindi; keep it conversational, fun, and full of energy, crafted for YouTube Shorts so it instantly captures attention and keeps both kids and parents entertained. You can simplify, rephrase, or slightly adapt the story to make it short-worthy and engaging, while preserving the core meaning and emotion. Your output must be valid SSML compatible with Google Text-to-Speech, using natural yet energetic pacing, expressive pauses, prosody, and emphasis. Include natural, fitting sound expressions (like "खौं… खौं…", "गर्र…" or "ऊँ…") when they enhance storytelling — never forced. Maintain a bright, expressive tone with humor, warmth, and curiosity, ensuring the narration feels lively and shareable.
 
-const SYSTEM_PROMPT_NO_SSML = `You are an expert dialogue and narration writer for text-to-speech, specializing in playful, short-form storytelling for children aged 3–7 and their parents. When a story is provided, you understand its tone, rhythm, and emotions, then write lively, engaging, and easy-to-follow narration and dialogues in modern North Indian Hindi — natural for listeners from UP, Bihar, and nearby regions. Avoid formal or literary Hindi; keep it conversational, fun, and full of energy, crafted for YouTube Shorts so it instantly captures attention and keeps both kids and parents entertained. You can simplify, rephrase, or slightly adapt the story to make it short-worthy and engaging, while preserving the core meaning and emotion. Do NOT use any SSML tags. Just return plain text with natural storytelling. Maintain a bright, expressive tone with humor, warmth, and curiosity, ensuring the narration feels lively and shareable.`;
+IMPORTANT OUTPUT RULES:
+- Return only the exact words that should be spoken in TTS.
+- Do not use screenplay or script labels such as "narration", "Narrator", "बच्चे", "गुरुजी", or speaker names before lines.
+- Do not include stage directions, markdown, asterisks, brackets, emojis, or notes like "(excitedly)", "** narration **", or "[pause]".
+- Do not explain tone separately; express tone only through the spoken wording and SSML.
+- Output only the final speakable SSML, nothing else.`;
+
+const SYSTEM_PROMPT_NO_SSML = `You are an expert dialogue and narration writer for text-to-speech, specializing in playful, short-form storytelling for children aged 3–7 and their parents. When a story is provided, you understand its tone, rhythm, and emotions, then write lively, engaging, and easy-to-follow narration and dialogue in modern North Indian Hindi — natural for listeners from UP, Bihar, and nearby regions. Avoid formal or literary Hindi; keep it conversational, fun, and full of energy, crafted for YouTube Shorts so it instantly captures attention and keeps both kids and parents entertained. You can simplify, rephrase, or slightly adapt the story to make it short-worthy and engaging, while preserving the core meaning and emotion. Do NOT use any SSML tags. Just return plain text with natural storytelling. Maintain a bright, expressive tone with humor, warmth, and curiosity, ensuring the narration feels lively and shareable.
+
+IMPORTANT OUTPUT RULES:
+- Return only the exact words that should be spoken in TTS.
+- Do not use screenplay or script labels such as "narration", "Narrator", "बच्चे", "गुरुजी", or speaker names before lines.
+- Do not include stage directions, markdown, asterisks, brackets, emojis, or notes like "(excitedly)", "** narration **", or "[pause]".
+- Do not explain tone separately; express tone only through the spoken wording.
+- Output only the final speakable plain text, nothing else.`;
 
 const SYSTEM_PROMPT_YT = `You analyze a provided story or SRT and create YouTube Shorts metadata optimized for discoverability among North Indian Hindi-speaking kids and their parents. You produce 2-3 catchy, safe, kid-friendly title options mixing Hindi and English, a concise description, trending hashtags, and comma-separated tags. Always include relevant, high-performing hashtags in both the description and metadata that match the story's theme, moral, or festival context. You research current YouTube Shorts and Indian kids content trends to select high-performing Hindi and Hinglish keywords, festivals, morals, and curiosity hooks, while avoiding unsafe, scary, or inappropriate phrasing. You keep language simple, positive, culturally relevant, and appealing to parents. When details are missing, infer responsibly without altering the story's meaning. Be concise, SEO-aware, and platform-specific. Use Hindi-English mix (Hinglish) by default. Do not include policy-violating or misleading claims. Your goal is to make the reel reachable to the widest audience possible. Thumbnails are not included since YouTube Shorts auto-select them.
 
@@ -836,7 +852,41 @@ async function addAudio(videoPath, audioPath, outputPath) {
   });
 }
 
-async function createStoryVideo(projectId, onProgress) {
+function runCommand(command, args, onLog) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: __dirname,
+      shell: false,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    child.stdout.on('data', (data) => onLog?.(data.toString().trim()));
+    child.stderr.on('data', (data) => onLog?.(data.toString().trim()));
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error(`${command} ${args.join(' ')} exited with code ${code}`));
+      }
+    });
+  });
+}
+
+async function createStoryVideoRemotion(projectId, onProgress) {
+  onProgress({ status: 'remotion', message: 'Rendering video with Remotion...' });
+
+  await runCommand(process.execPath, ['scripts/render-remotion.js', projectId], (message) => {
+    if (message) console.log('Remotion render:', message);
+  });
+
+  const projectDir = await getProjectDir(projectId);
+  const outputPath = path.join(projectDir, 'video.mp4');
+  onProgress({ status: 'done', message: 'Remotion video created!', progress: 100 });
+  return outputPath;
+}
+
+async function createStoryVideoFfmpeg(projectId, onProgress) {
   const projectDir = await getProjectDir(projectId);
   const imageDir = path.join(projectDir, 'images');
   const audioPath = path.join(projectDir, 'audio.wav');
@@ -896,10 +946,14 @@ async function createStoryVideo(projectId, onProgress) {
 
 // Video generation endpoint
 app.post('/api/generate-video', async (req, res) => {
-  const { projectId } = req.body;
+  const { projectId, renderer = 'ffmpeg' } = req.body;
 
   if (!projectId) {
     return res.status(400).json({ success: false, error: 'Project ID is required' });
+  }
+
+  if (!['ffmpeg', 'remotion'].includes(renderer)) {
+    return res.status(400).json({ success: false, error: 'Invalid video renderer' });
   }
 
   try {
@@ -915,13 +969,61 @@ app.post('/api/generate-video', async (req, res) => {
     const images = fs.readdirSync(imageDir).filter(f => f.endsWith('.png'));
     if (images.length === 0) return res.status(400).json({ success: false, error: 'No images found' });
 
-    const outputPath = await createStoryVideo(projectId, (progress) => {
-      console.log('Video generation:', progress.message);
+    const renderVideo = renderer === 'remotion' ? createStoryVideoRemotion : createStoryVideoFfmpeg;
+    await renderVideo(projectId, (progress) => {
+      console.log(`Video generation (${renderer}):`, progress.message);
     });
 
-    res.json({ success: true, videoUrl: `/api/project/${projectId}/video` });
+    res.json({ success: true, renderer, videoUrl: `/api/project/${projectId}/video` });
   } catch (error) {
     console.error('Video generation error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+let remotionStudioProcess = null;
+const REMOTION_STUDIO_PORT = Number(process.env.REMOTION_STUDIO_PORT || 3001);
+
+app.post('/api/remotion-studio', async (req, res) => {
+  const { projectId } = req.body;
+
+  if (!projectId) {
+    return res.status(400).json({ success: false, error: 'Project ID is required' });
+  }
+
+  try {
+    const { propsPath } = await prepareRemotionProject(projectId);
+
+    if (remotionStudioProcess && remotionStudioProcess.exitCode === null) {
+      remotionStudioProcess.kill();
+    }
+
+    remotionStudioProcess = spawn('npx', [
+      'remotion',
+      'studio',
+      'remotion/index.jsx',
+      `--props=${propsPath}`,
+      `--port=${REMOTION_STUDIO_PORT}`,
+      '--no-open',
+    ], {
+      cwd: __dirname,
+      shell: false,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    remotionStudioProcess.stdout.on('data', (data) => console.log('Remotion Studio:', data.toString().trim()));
+    remotionStudioProcess.stderr.on('data', (data) => console.log('Remotion Studio:', data.toString().trim()));
+    remotionStudioProcess.on('close', (code) => {
+      console.log(`Remotion Studio exited with code ${code}`);
+      remotionStudioProcess = null;
+    });
+
+    res.json({
+      success: true,
+      studioUrl: `http://localhost:${REMOTION_STUDIO_PORT}`,
+    });
+  } catch (error) {
+    console.error('Remotion Studio error:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
