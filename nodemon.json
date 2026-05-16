@@ -1,0 +1,7 @@
+{
+  "ignore": [
+    "storage/**",
+    "remotion-props.json",
+    "**/remotion-props.json"
+  ]
+}

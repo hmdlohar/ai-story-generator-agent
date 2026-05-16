@@ -1,19 +1,19 @@
-import 'dotenv/config';
-import express from 'express';
-import path from 'path';
-import fs from 'fs';
-import { promises as fsPromises } from 'fs';
-import os from 'os';
-import { spawn } from 'child_process';
-import { createOpenRouter } from '@openrouter/ai-sdk-provider';
-import { generateText } from 'ai';
-import { SarvamAIClient } from 'sarvamai';
-import OpenAI from 'openai';
-import { fileURLToPath } from 'url';
-import ffmpeg from 'fluent-ffmpeg';
-import { prepareRemotionProject } from './scripts/remotion-data.js';
+import "dotenv/config";
+import express from "express";
+import path from "path";
+import fs from "fs";
+import { promises as fsPromises } from "fs";
+import os from "os";
+import { spawn } from "child_process";
+import { createOpenAI } from "@ai-sdk/openai";
+import { generateText } from "ai";
+import { SarvamAIClient } from "sarvamai";
+import OpenAI from "openai";
+import { fileURLToPath } from "url";
+import ffmpeg from "fluent-ffmpeg";
+import { prepareRemotionProject } from "./scripts/remotion-data.js";
 
-ffmpeg.setFfmpegPath('/usr/bin/ffmpeg');
+ffmpeg.setFfmpegPath("/usr/bin/ffmpeg");
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -21,18 +21,24 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-const STORAGE_ROOT = path.resolve(process.env.STORAGE_ROOT_DIR || './storage');
-const COMFY_URL = process.env.COMFY_URL || '';
-const COMFY_WORKFLOW = process.env.COMFY_WORKFLOW || '/media/hyper8/HYPER/Downloads/comfy-workflows/flux-kelin-gguf2.api.json';
-const OPENROUTER_IMAGE_MODEL = process.env.OPENROUTER_IMAGE_MODEL || 'black-forest-labs/flux.2-klein-4b';
+const STORAGE_ROOT = path.resolve(process.env.STORAGE_ROOT_DIR || "./storage");
+const COMFY_URL = process.env.COMFY_URL || "";
+const COMFY_WORKFLOW =
+  process.env.COMFY_WORKFLOW ||
+  "/media/hyper8/HYPER/Downloads/comfy-workflows/flux-kelin-gguf2.api.json";
+const OPENROUTER_IMAGE_MODEL =
+  process.env.OPENROUTER_IMAGE_MODEL || "black-forest-labs/flux.2-klein-4b";
 const IMAGE_WIDTH = 810;
 const IMAGE_HEIGHT = 1440;
 
-const AVAILABLE_MODELS = (process.env.AVAILABLE_MODELS || '').split(',').filter(m => m.trim());
-const DEFAULT_MODEL = AVAILABLE_MODELS[0] || '';
+const AVAILABLE_MODELS = (process.env.AVAILABLE_MODELS || "")
+  .split(",")
+  .filter((m) => m.trim());
+const DEFAULT_MODEL = AVAILABLE_MODELS[0] || "";
 
-const openrouter = createOpenRouter({
+const openrouter = createOpenAI({
   apiKey: process.env.OPENROUTER_API_KEY,
+  baseURL: process.env.OPENROUTER_BASE_URL || "https://opencode.ai/zen/v1",
 });
 
 const sarvamClient = process.env.SARVAM_API_KEY
@@ -47,8 +53,8 @@ let comfyClient = null;
 
 async function getComfyClient() {
   if (!comfyClient && COMFY_URL) {
-    console.log('Initializing ComfyClient with URL:', COMFY_URL);
-    const { ComfyClient } = await import('hmd-comfy-client');
+    console.log("Initializing ComfyClient with URL:", COMFY_URL);
+    const { ComfyClient } = await import("hmd-comfy-client");
     comfyClient = new ComfyClient(COMFY_URL);
   }
   return comfyClient;
@@ -61,7 +67,7 @@ async function downloadWithRetry(client, imageInfo, outputPath, retries = 3) {
     } catch (err) {
       console.log(`Download attempt ${attempt} failed: ${err.message}`);
       if (attempt === retries) throw err;
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      await new Promise((resolve) => setTimeout(resolve, 2000));
     }
   }
 }
@@ -168,37 +174,49 @@ Do not add commentary.
 Only output the JSON array.`;
 
 async function getProjectDir(projectId) {
-  const dir = path.join(STORAGE_ROOT, 'projects', projectId);
+  const dir = path.join(STORAGE_ROOT, "projects", projectId);
   await fsPromises.mkdir(dir, { recursive: true });
   return dir;
 }
 
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ extended: true, limit: "50mb" }));
+app.use(express.static(path.join(__dirname, "public")));
 
-app.get('/api/models', (req, res) => {
+app.get("/api/models", (req, res) => {
   res.json({ models: AVAILABLE_MODELS, default: DEFAULT_MODEL });
 });
 
-app.get('/api/project/:projectId', async (req, res) => {
+app.get("/api/project/:projectId", async (req, res) => {
   try {
     const projectDir = await getProjectDir(req.params.projectId);
-    const inputPath = path.join(projectDir, 'input.txt');
-    const storyPath = path.join(projectDir, 'story.txt');
-    const audioPath = path.join(projectDir, 'audio.wav');
-    const subtitlePath = path.join(projectDir, 'subtitle.srt');
-    const imagePromptsPath = path.join(projectDir, 'image-prompts.json');
-    const ytMetadataPath = path.join(projectDir, 'yt-metadata.txt');
+    const inputPath = path.join(projectDir, "input.txt");
+    const storyPath = path.join(projectDir, "story.txt");
+    const audioPath = path.join(projectDir, "audio.wav");
+    const subtitlePath = path.join(projectDir, "subtitle.srt");
+    const imagePromptsPath = path.join(projectDir, "image-prompts.json");
+    const ytMetadataPath = path.join(projectDir, "yt-metadata.txt");
 
     let data = { projectId: req.params.projectId };
 
-    try { data.input = await fsPromises.readFile(inputPath, 'utf8'); } catch { }
-    try { data.story = await fsPromises.readFile(storyPath, 'utf8'); } catch { }
-    try { data.audio = await fsPromises.readFile(audioPath, 'base64'); } catch { }
-    try { data.subtitle = await fsPromises.readFile(subtitlePath, 'utf8'); } catch { }
-    try { data.imagePrompts = await fsPromises.readFile(imagePromptsPath, 'utf8'); } catch { }
-    try { data.ytMetadata = await fsPromises.readFile(ytMetadataPath, 'utf8'); } catch { }
+    try {
+      data.input = await fsPromises.readFile(inputPath, "utf8");
+    } catch {}
+    try {
+      data.story = await fsPromises.readFile(storyPath, "utf8");
+    } catch {}
+    try {
+      data.audio = await fsPromises.readFile(audioPath, "base64");
+    } catch {}
+    try {
+      data.subtitle = await fsPromises.readFile(subtitlePath, "utf8");
+    } catch {}
+    try {
+      data.imagePrompts = await fsPromises.readFile(imagePromptsPath, "utf8");
+    } catch {}
+    try {
+      data.ytMetadata = await fsPromises.readFile(ytMetadataPath, "utf8");
+    } catch {}
 
     res.json({ success: true, data });
   } catch (error) {
@@ -206,34 +224,44 @@ app.get('/api/project/:projectId', async (req, res) => {
   }
 });
 
-app.post('/api/project/:projectId/input', async (req, res) => {
+app.post("/api/project/:projectId/input", async (req, res) => {
   try {
     const { content } = req.body;
     const projectDir = await getProjectDir(req.params.projectId);
-    await fsPromises.writeFile(path.join(projectDir, 'input.txt'), content || '');
+    await fsPromises.writeFile(
+      path.join(projectDir, "input.txt"),
+      content || "",
+    );
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-app.post('/api/project/:projectId/story', async (req, res) => {
+app.post("/api/project/:projectId/story", async (req, res) => {
   try {
     const { content } = req.body;
     const projectDir = await getProjectDir(req.params.projectId);
-    await fsPromises.writeFile(path.join(projectDir, 'story.txt'), content || '');
+    await fsPromises.writeFile(
+      path.join(projectDir, "story.txt"),
+      content || "",
+    );
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-app.post('/api/project/:projectId/audio', async (req, res) => {
+app.post("/api/project/:projectId/audio", async (req, res) => {
   try {
     const { content } = req.body;
     const projectDir = await getProjectDir(req.params.projectId);
     if (content) {
-      await fsPromises.writeFile(path.join(projectDir, 'audio.wav'), content, 'base64');
+      await fsPromises.writeFile(
+        path.join(projectDir, "audio.wav"),
+        content,
+        "base64",
+      );
     }
     res.json({ success: true });
   } catch (error) {
@@ -241,12 +269,15 @@ app.post('/api/project/:projectId/audio', async (req, res) => {
   }
 });
 
-app.post('/api/project/:projectId/subtitle', async (req, res) => {
+app.post("/api/project/:projectId/subtitle", async (req, res) => {
   try {
     const { content } = req.body;
     const projectDir = await getProjectDir(req.params.projectId);
     if (content) {
-      await fsPromises.writeFile(path.join(projectDir, 'subtitle.srt'), content);
+      await fsPromises.writeFile(
+        path.join(projectDir, "subtitle.srt"),
+        content,
+      );
     }
     res.json({ success: true });
   } catch (error) {
@@ -254,12 +285,15 @@ app.post('/api/project/:projectId/subtitle', async (req, res) => {
   }
 });
 
-app.post('/api/project/:projectId/image-prompts', async (req, res) => {
+app.post("/api/project/:projectId/image-prompts", async (req, res) => {
   try {
     const { content } = req.body;
     const projectDir = await getProjectDir(req.params.projectId);
     if (content) {
-      await fsPromises.writeFile(path.join(projectDir, 'image-prompts.json'), content);
+      await fsPromises.writeFile(
+        path.join(projectDir, "image-prompts.json"),
+        content,
+      );
     }
     res.json({ success: true });
   } catch (error) {
@@ -267,12 +301,15 @@ app.post('/api/project/:projectId/image-prompts', async (req, res) => {
   }
 });
 
-app.post('/api/project/:projectId/yt-metadata', async (req, res) => {
+app.post("/api/project/:projectId/yt-metadata", async (req, res) => {
   try {
     const { content } = req.body;
     const projectDir = await getProjectDir(req.params.projectId);
     if (content) {
-      await fsPromises.writeFile(path.join(projectDir, 'yt-metadata.txt'), content);
+      await fsPromises.writeFile(
+        path.join(projectDir, "yt-metadata.txt"),
+        content,
+      );
     }
     res.json({ success: true });
   } catch (error) {
@@ -280,15 +317,15 @@ app.post('/api/project/:projectId/yt-metadata', async (req, res) => {
   }
 });
 
-app.post('/api/generate', async (req, res) => {
+app.post("/api/generate", async (req, res) => {
   const { story, model, ssml } = req.body;
   if (!story) {
-    return res.status(400).json({ success: false, error: 'Story is required' });
+    return res.status(400).json({ success: false, error: "Story is required" });
   }
 
   const selectedModel = model || DEFAULT_MODEL;
   if (!selectedModel) {
-    return res.status(400).json({ success: false, error: 'No model selected' });
+    return res.status(400).json({ success: false, error: "No model selected" });
   }
 
   const systemPrompt = ssml ? SYSTEM_PROMPT_SSML : SYSTEM_PROMPT_NO_SSML;
@@ -302,45 +339,47 @@ app.post('/api/generate', async (req, res) => {
 
     res.json({ success: true, output: result.text.trim() });
   } catch (error) {
-    console.error('Error generating story:', error);
+    console.error("Error generating story:", error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-app.post('/api/tts', async (req, res) => {
+app.post("/api/tts", async (req, res) => {
   const { text, speaker, language } = req.body;
 
   if (!text) {
-    return res.status(400).json({ success: false, error: 'Text is required' });
+    return res.status(400).json({ success: false, error: "Text is required" });
   }
 
   if (!sarvamClient) {
-    return res.status(400).json({ success: false, error: 'SARVAM_API_KEY not configured' });
+    return res
+      .status(400)
+      .json({ success: false, error: "SARVAM_API_KEY not configured" });
   }
 
   try {
     const response = await sarvamClient.textToSpeech.convert({
       text,
-      target_language_code: language || 'hi-IN',
-      speaker: speaker || 'shubh',
-      model: 'bulbul:v3',
+      target_language_code: language || "hi-IN",
+      speaker: speaker || "shubh",
+      model: "bulbul:v3",
       speech_sample_rate: 24000,
-      audio_format: 'wav'
+      audio_format: "wav",
     });
 
     res.json({
       success: true,
       audio: response?.audios?.[0] || null,
-      request_id: response?.request_id
+      request_id: response?.request_id,
     });
   } catch (error) {
-    console.error('Error generating TTS:', error);
+    console.error("Error generating TTS:", error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
 function vttToSrt(vtt) {
-  let srt = vtt.replace(/WEBVTT\n\n/, '');
+  let srt = vtt.replace(/WEBVTT\n\n/, "");
   let index = 1;
   srt = srt.replace(/(\d{2}:\d{2}:\d{2})\.(\d{3})/g, (match, time, ms) => {
     return `${time},${ms}`;
@@ -349,29 +388,31 @@ function vttToSrt(vtt) {
   return srt;
 }
 
-app.post('/api/subtitle', async (req, res) => {
+app.post("/api/subtitle", async (req, res) => {
   const { audio } = req.body;
 
   if (!audio) {
-    return res.status(400).json({ success: false, error: 'Audio is required' });
+    return res.status(400).json({ success: false, error: "Audio is required" });
   }
 
   if (!process.env.OPENAI_API_KEY) {
-    return res.status(400).json({ success: false, error: 'OPENAI_API_KEY not configured' });
+    return res
+      .status(400)
+      .json({ success: false, error: "OPENAI_API_KEY not configured" });
   }
 
   try {
-    const tempDir = path.join(__dirname, 'temp');
+    const tempDir = path.join(__dirname, "temp");
     await fsPromises.mkdir(tempDir, { recursive: true });
     const tempFile = path.join(tempDir, `audio_${Date.now()}.wav`);
 
-    await fsPromises.writeFile(tempFile, audio, 'base64');
+    await fsPromises.writeFile(tempFile, audio, "base64");
 
     const transcription = await openai.audio.transcriptions.create({
       file: fs.createReadStream(tempFile),
-      model: 'whisper-1',
-      language: 'hi',
-      response_format: 'vtt'
+      model: "whisper-1",
+      language: "hi",
+      response_format: "vtt",
     });
 
     await fsPromises.unlink(tempFile);
@@ -380,24 +421,26 @@ app.post('/api/subtitle', async (req, res) => {
 
     res.json({
       success: true,
-      subtitle: srt
+      subtitle: srt,
     });
   } catch (error) {
-    console.error('Error generating subtitle:', error);
+    console.error("Error generating subtitle:", error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-app.post('/api/image-prompts', async (req, res) => {
+app.post("/api/image-prompts", async (req, res) => {
   const { subtitle } = req.body;
 
   if (!subtitle) {
-    return res.status(400).json({ success: false, error: 'Subtitle (SRT) is required' });
+    return res
+      .status(400)
+      .json({ success: false, error: "Subtitle (SRT) is required" });
   }
 
   const selectedModel = DEFAULT_MODEL;
   if (!selectedModel) {
-    return res.status(400).json({ success: false, error: 'No model selected' });
+    return res.status(400).json({ success: false, error: "No model selected" });
   }
 
   try {
@@ -409,21 +452,23 @@ app.post('/api/image-prompts', async (req, res) => {
 
     res.json({ success: true, prompts: result.text.trim() });
   } catch (error) {
-    console.error('Error generating image prompts:', error);
+    console.error("Error generating image prompts:", error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-app.post('/api/youtube-metadata', async (req, res) => {
+app.post("/api/youtube-metadata", async (req, res) => {
   const { story, subtitle } = req.body;
 
   if (!story && !subtitle) {
-    return res.status(400).json({ success: false, error: 'Story or subtitle is required' });
+    return res
+      .status(400)
+      .json({ success: false, error: "Story or subtitle is required" });
   }
 
   const selectedModel = DEFAULT_MODEL;
   if (!selectedModel) {
-    return res.status(400).json({ success: false, error: 'No model selected' });
+    return res.status(400).json({ success: false, error: "No model selected" });
   }
 
   try {
@@ -436,42 +481,49 @@ app.post('/api/youtube-metadata', async (req, res) => {
 
     res.json({ success: true, output: result.text.trim() });
   } catch (error) {
-    console.error('Error generating YouTube metadata:', error);
+    console.error("Error generating YouTube metadata:", error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-app.post('/api/generate-images', async (req, res) => {
+app.post("/api/generate-images", async (req, res) => {
   const { projectId, provider } = req.body;
 
   if (!projectId) {
-    return res.status(400).json({ success: false, error: 'Project ID is required' });
+    return res
+      .status(400)
+      .json({ success: false, error: "Project ID is required" });
   }
 
-  if (provider === 'openrouter' || !COMFY_URL) {
-    return res.redirect(`/api/generate-images-openrouter?projectId=${projectId}`);
+  if (provider === "openrouter" || !COMFY_URL) {
+    return res.redirect(
+      `/api/generate-images-openrouter?projectId=${projectId}`,
+    );
   }
 
   const client = await getComfyClient();
   if (!client) {
-    return res.status(400).json({ success: false, error: 'COMFY_URL not configured and no openrouter fallback' });
+    return res.status(400).json({
+      success: false,
+      error: "COMFY_URL not configured and no openrouter fallback",
+    });
   }
 
   try {
     try {
       await fetch(`${COMFY_URL}/queue`);
-      console.log('ComfyUI connection verified');
+      console.log("ComfyUI connection verified");
     } catch (connErr) {
-      console.error('ComfyUI connection test failed:', connErr.message);
+      console.error("ComfyUI connection test failed:", connErr.message);
     }
 
     const projectDir = await getProjectDir(projectId);
-    const promptsPath = path.join(projectDir, 'image-prompts.json');
-    const imageDir = path.join(projectDir, 'images');
+    const promptsPath = path.join(projectDir, "image-prompts.json");
+    const imageDir = path.join(projectDir, "images");
 
     await fsPromises.mkdir(imageDir, { recursive: true });
 
-    const promptsContent = await fsPromises.readFile(promptsPath, 'utf8');
+    const promptsContent = await fsPromises.readFile(promptsPath, "utf8");
     let prompts;
     try {
       prompts = JSON.parse(promptsContent);
@@ -480,12 +532,14 @@ app.post('/api/generate-images', async (req, res) => {
       if (match) {
         prompts = JSON.parse(match[0]);
       } else {
-        throw new Error('Invalid prompts format');
+        throw new Error("Invalid prompts format");
       }
     }
 
     const existingFiles = await fsPromises.readdir(imageDir);
-    const completedCount = existingFiles.filter(f => f.endsWith('.png')).length;
+    const completedCount = existingFiles.filter((f) =>
+      f.endsWith(".png"),
+    ).length;
 
     const startIndex = completedCount;
     const totalCount = prompts.length;
@@ -493,13 +547,15 @@ app.post('/api/generate-images', async (req, res) => {
     if (startIndex >= totalCount) {
       return res.json({
         success: true,
-        message: 'All images already generated',
+        message: "All images already generated",
         completed: totalCount,
-        total: totalCount
+        total: totalCount,
       });
     }
 
-    console.log(`Generating images ${startIndex + 1} to ${totalCount} via ComfyUI...`);
+    console.log(
+      `Generating images ${startIndex + 1} to ${totalCount} via ComfyUI...`,
+    );
 
     for (let i = startIndex; i < totalCount; i++) {
       const prompt = prompts[i];
@@ -514,17 +570,20 @@ app.post('/api/generate-images', async (req, res) => {
             width: 512,
           },
           output: {
-            type: 'base64',
+            type: "base64",
           },
         });
 
         if (result.images && result.images[0] && result.images[0].base64) {
-          const base64Data = result.images[0].base64.split(',')[1];
+          const base64Data = result.images[0].base64.split(",")[1];
           const outputPath = path.join(imageDir, `${i + 1}.png`);
-          await fsPromises.writeFile(outputPath, base64Data, 'base64');
+          await fsPromises.writeFile(outputPath, base64Data, "base64");
           console.log(`Image ${i + 1} saved to ${outputPath}`);
         } else {
-          console.log(`Image ${i + 1} result:`, JSON.stringify(result).substring(0, 200));
+          console.log(
+            `Image ${i + 1} result:`,
+            JSON.stringify(result).substring(0, 200),
+          );
         }
       } catch (err) {
         console.error(`Error generating image ${i + 1}:`, err.message);
@@ -532,7 +591,7 @@ app.post('/api/generate-images', async (req, res) => {
           success: false,
           error: `Failed at image ${i + 1}: ${err.message}`,
           completed: i,
-          total: totalCount
+          total: totalCount,
         });
       }
     }
@@ -540,33 +599,37 @@ app.post('/api/generate-images', async (req, res) => {
     res.json({
       success: true,
       completed: totalCount,
-      total: totalCount
+      total: totalCount,
     });
   } catch (error) {
-    console.error('Error generating images:', error);
+    console.error("Error generating images:", error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-app.post('/api/generate-images-openrouter', async (req, res) => {
+app.post("/api/generate-images-openrouter", async (req, res) => {
   const { projectId } = req.body;
 
   if (!projectId) {
-    return res.status(400).json({ success: false, error: 'Project ID is required' });
+    return res
+      .status(400)
+      .json({ success: false, error: "Project ID is required" });
   }
 
   if (!process.env.OPENROUTER_API_KEY) {
-    return res.status(400).json({ success: false, error: 'OPENROUTER_API_KEY not configured' });
+    return res
+      .status(400)
+      .json({ success: false, error: "OPENROUTER_API_KEY not configured" });
   }
 
   try {
     const projectDir = await getProjectDir(projectId);
-    const promptsPath = path.join(projectDir, 'image-prompts.json');
-    const imageDir = path.join(projectDir, 'images');
+    const promptsPath = path.join(projectDir, "image-prompts.json");
+    const imageDir = path.join(projectDir, "images");
 
     await fsPromises.mkdir(imageDir, { recursive: true });
 
-    const promptsContent = await fsPromises.readFile(promptsPath, 'utf8');
+    const promptsContent = await fsPromises.readFile(promptsPath, "utf8");
     let prompts;
     try {
       prompts = JSON.parse(promptsContent);
@@ -575,12 +638,14 @@ app.post('/api/generate-images-openrouter', async (req, res) => {
       if (match) {
         prompts = JSON.parse(match[0]);
       } else {
-        throw new Error('Invalid prompts format');
+        throw new Error("Invalid prompts format");
       }
     }
 
     const existingFiles = await fsPromises.readdir(imageDir);
-    const completedCount = existingFiles.filter(f => f.endsWith('.png')).length;
+    const completedCount = existingFiles.filter((f) =>
+      f.endsWith(".png"),
+    ).length;
 
     const startIndex = completedCount;
     const totalCount = prompts.length;
@@ -588,37 +653,40 @@ app.post('/api/generate-images-openrouter', async (req, res) => {
     if (startIndex >= totalCount) {
       return res.json({
         success: true,
-        message: 'All images already generated',
+        message: "All images already generated",
         completed: totalCount,
-        total: totalCount
+        total: totalCount,
       });
     }
 
-    console.log(`Generating images ${startIndex + 1} to ${totalCount} via OpenRouter...`);
+    console.log(
+      `Generating images ${startIndex + 1} to ${totalCount} via OpenRouter...`,
+    );
 
-    const imageModel = 'sourceful/riverflow-v2-fast';
+    const imageModel = "sourceful/riverflow-v2-fast";
 
     for (let i = startIndex; i < totalCount; i++) {
       const prompt = prompts[i];
       console.log(`Generating image ${i + 1}/${totalCount}`);
 
       try {
-        const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
-            'HTTP-Referer': 'http://localhost:3000',
-            'X-Title': 'StoryGenerator'
+        const response = await fetch(
+          "https://openrouter.ai/api/v1/chat/completions",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+              "HTTP-Referer": "http://localhost:3000",
+              "X-Title": "StoryGenerator",
+            },
+            body: JSON.stringify({
+              model: imageModel,
+              messages: [{ role: "user", content: prompt }],
+              modalities: ["image"],
+            }),
           },
-          body: JSON.stringify({
-            model: imageModel,
-            messages: [
-              { role: 'user', content: prompt }
-            ],
-            modalities: ['image']
-          })
-        });
+        );
 
         if (!response.ok) {
           const errorText = await response.text();
@@ -630,13 +698,18 @@ app.post('/api/generate-images-openrouter', async (req, res) => {
 
         const imageUrl = message?.images?.[0]?.image_url?.url;
         if (imageUrl) {
-          const base64Data = imageUrl.includes(',') ? imageUrl.split(',')[1] : imageUrl;
+          const base64Data = imageUrl.includes(",")
+            ? imageUrl.split(",")[1]
+            : imageUrl;
           const outputPath = path.join(imageDir, `${i + 1}.png`);
-          await fsPromises.writeFile(outputPath, base64Data, 'base64');
+          await fsPromises.writeFile(outputPath, base64Data, "base64");
           console.log(`Image ${i + 1} saved to ${outputPath}`);
         } else {
-          console.log(`Image ${i + 1} result:`, JSON.stringify(data).substring(0, 500));
-          throw new Error('No image in response');
+          console.log(
+            `Image ${i + 1} result:`,
+            JSON.stringify(data).substring(0, 500),
+          );
+          throw new Error("No image in response");
         }
       } catch (err) {
         console.error(`Error generating image ${i + 1}:`, err.message);
@@ -644,7 +717,7 @@ app.post('/api/generate-images-openrouter', async (req, res) => {
           success: false,
           error: `Failed at image ${i + 1}: ${err.message}`,
           completed: i,
-          total: totalCount
+          total: totalCount,
         });
       }
     }
@@ -652,67 +725,69 @@ app.post('/api/generate-images-openrouter', async (req, res) => {
     res.json({
       success: true,
       completed: totalCount,
-      total: totalCount
+      total: totalCount,
     });
   } catch (error) {
-    console.error('Error generating images:', error);
+    console.error("Error generating images:", error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-app.get('/api/project/:projectId/images-status', async (req, res) => {
+app.get("/api/project/:projectId/images-status", async (req, res) => {
   try {
     const projectDir = await getProjectDir(req.params.projectId);
-    const imageDir = path.join(projectDir, 'images');
+    const imageDir = path.join(projectDir, "images");
 
     await fsPromises.mkdir(imageDir, { recursive: true });
 
-    const promptsPath = path.join(projectDir, 'image-prompts.json');
+    const promptsPath = path.join(projectDir, "image-prompts.json");
     let total = 0;
     try {
-      const promptsContent = await fsPromises.readFile(promptsPath, 'utf8');
+      const promptsContent = await fsPromises.readFile(promptsPath, "utf8");
       const prompts = JSON.parse(promptsContent);
       total = Array.isArray(prompts) ? prompts.length : 0;
-    } catch { }
+    } catch {}
 
     const existingFiles = await fsPromises.readdir(imageDir);
-    const completed = existingFiles.filter(f => f.endsWith('.png')).length;
-    const images = existingFiles.filter(f => f.endsWith('.png')).map(f => ({
-      filename: f,
-      url: `/api/project/${req.params.projectId}/images/${f}`
-    }));
+    const completed = existingFiles.filter((f) => f.endsWith(".png")).length;
+    const images = existingFiles
+      .filter((f) => f.endsWith(".png"))
+      .map((f) => ({
+        filename: f,
+        url: `/api/project/${req.params.projectId}/images/${f}`,
+      }));
 
     res.json({
       success: true,
       completed,
       total,
-      images
+      images,
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-app.get('/api/project/:projectId/images/:filename', async (req, res) => {
+app.get("/api/project/:projectId/images/:filename", async (req, res) => {
   try {
     const projectDir = await getProjectDir(req.params.projectId);
-    const imagePath = path.resolve(projectDir, 'images', req.params.filename);
+    const imagePath = path.resolve(projectDir, "images", req.params.filename);
 
     await fsPromises.access(imagePath);
 
     res.sendFile(imagePath);
   } catch (error) {
-    console.error('Image error:', error.message);
-    res.status(404).send('Not found');
+    console.error("Image error:", error.message);
+    res.status(404).send("Not found");
   }
 });
 
-app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+app.get("/", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
-app.get('/story', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'story.html'));
+app.get("/story", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "story.html"));
 });
 
 // Video Generation Functions
@@ -723,13 +798,16 @@ const ZOOM_RATE = 0.08;
 
 function parseSRT(data) {
   const segments = [];
-  const regex = /(\d{1,2}:\d{2}:\d{2}[.,]\d{3}) --> (\d{1,2}:\d{2}:\d{2}[.,]\d{3})/g;
+  const regex =
+    /(\d{1,2}:\d{2}:\d{2}[.,]\d{3}) --> (\d{1,2}:\d{2}:\d{2}[.,]\d{3})/g;
   let match;
-  const lines = data.split('\n');
+  const lines = data.split("\n");
   let i = 0;
   while (i < lines.length) {
     const line = lines[i].trim();
-    const timeMatch = line.match(/(\d{1,2}:\d{2}:\d{2}[.,]\d{3}) --> (\d{1,2}:\d{2}:\d{2}[.,]\d{3})/);
+    const timeMatch = line.match(
+      /(\d{1,2}:\d{2}:\d{2}[.,]\d{3}) --> (\d{1,2}:\d{2}:\d{2}[.,]\d{3})/,
+    );
     if (timeMatch) {
       const textLines = [];
       i++;
@@ -739,16 +817,20 @@ function parseSRT(data) {
           i++;
           continue;
         }
-        if (/^\d{1,2}:\d{2}:\d{2}[.,]\d{3} --> \d{1,2}:\d{2}:\d{2}[.,]\d{3}/.test(nextLine)) {
+        if (
+          /^\d{1,2}:\d{2}:\d{2}[.,]\d{3} --> \d{1,2}:\d{2}:\d{2}[.,]\d{3}/.test(
+            nextLine,
+          )
+        ) {
           break;
         }
         textLines.push(nextLine);
         i++;
       }
       segments.push({
-        startTime: timeMatch[1].replace(',', '.'),
-        endTime: timeMatch[2].replace(',', '.'),
-        text: textLines.join(' '),
+        startTime: timeMatch[1].replace(",", "."),
+        endTime: timeMatch[2].replace(",", "."),
+        text: textLines.join(" "),
       });
     } else {
       i++;
@@ -758,10 +840,13 @@ function parseSRT(data) {
 }
 
 function srtTimeToMs(timeStr) {
-  const parts = timeStr.split(':');
+  const parts = timeStr.split(":");
   const [h, m, s] = parts;
-  const sec = s.split('.');
-  return (parseInt(h) * 3600 + parseInt(m) * 60 + parseInt(sec[0])) * 1000 + parseInt(sec[1]);
+  const sec = s.split(".");
+  return (
+    (parseInt(h) * 3600 + parseInt(m) * 60 + parseInt(sec[0])) * 1000 +
+    parseInt(sec[1])
+  );
 }
 
 async function createImageClip(scene, index, totalScenes, tempDir, imageDir) {
@@ -778,7 +863,10 @@ async function createImageClip(scene, index, totalScenes, tempDir, imageDir) {
 
   let fadeFilters = [];
   if (index > 0) fadeFilters.push(`fade=t=in:st=0:d=${CROSSFADE_DURATION}`);
-  if (index < totalScenes - 1) fadeFilters.push(`fade=t=out:st=${Math.max(0, duration - CROSSFADE_DURATION)}:d=${CROSSFADE_DURATION}`);
+  if (index < totalScenes - 1)
+    fadeFilters.push(
+      `fade=t=out:st=${Math.max(0, duration - CROSSFADE_DURATION)}:d=${CROSSFADE_DURATION}`,
+    );
 
   let filters = [scaleCropFilter, zoomFilter];
   if (fadeFilters.length > 0) filters = filters.concat(fadeFilters);
@@ -788,46 +876,61 @@ async function createImageClip(scene, index, totalScenes, tempDir, imageDir) {
   return new Promise((resolve, reject) => {
     ffmpeg()
       .input(imagePath)
-      .inputOptions(['-loop', '1', '-framerate', FPS.toString()])
-      .videoFilters(filters.join(','))
+      .inputOptions(["-loop", "1", "-framerate", FPS.toString()])
+      .videoFilters(filters.join(","))
       .outputOptions([
-        '-t', duration.toFixed(6),
-        '-pix_fmt', 'yuv420p',
-        '-c:v', 'libx264',
-        '-preset', 'medium',
-        '-crf', '23',
-        '-r', FPS.toString(),
-        '-vsync', 'cfr',
-        '-g', Math.round(FPS).toString(),
-        '-fps_mode', 'cfr',
+        "-t",
+        duration.toFixed(6),
+        "-pix_fmt",
+        "yuv420p",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "medium",
+        "-crf",
+        "23",
+        "-r",
+        FPS.toString(),
+        "-vsync",
+        "cfr",
+        "-g",
+        Math.round(FPS).toString(),
+        "-fps_mode",
+        "cfr",
       ])
       .output(outputPath)
-      .on('end', () => resolve(outputPath))
-      .on('error', (err) => reject(err))
+      .on("end", () => resolve(outputPath))
+      .on("error", (err) => reject(err))
       .run();
   });
 }
 
 async function concatenateClips(clipPaths, tempDir, outputPath) {
-  const concatPath = path.join(tempDir, 'concat.txt');
-  const content = clipPaths.map(p => `file '${p}'`).join('\n');
+  const concatPath = path.join(tempDir, "concat.txt");
+  const content = clipPaths.map((p) => `file '${p}'`).join("\n");
   fs.writeFileSync(concatPath, content);
 
   return new Promise((resolve, reject) => {
     ffmpeg()
       .input(concatPath)
-      .inputOptions(['-f', 'concat', '-safe', '0'])
+      .inputOptions(["-f", "concat", "-safe", "0"])
       .outputOptions([
-        '-c:v', 'libx264',
-        '-pix_fmt', 'yuv420p',
-        '-preset', 'medium',
-        '-crf', '23',
-        '-r', FPS.toString(),
-        '-vsync', 'cfr',
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-preset",
+        "medium",
+        "-crf",
+        "23",
+        "-r",
+        FPS.toString(),
+        "-vsync",
+        "cfr",
       ])
       .output(outputPath)
-      .on('end', () => resolve(outputPath))
-      .on('error', (err) => reject(err))
+      .on("end", () => resolve(outputPath))
+      .on("error", (err) => reject(err))
       .run();
   });
 }
@@ -838,16 +941,21 @@ async function addAudio(videoPath, audioPath, outputPath) {
       .input(videoPath)
       .input(audioPath)
       .outputOptions([
-        '-c:v', 'copy',
-        '-c:a', 'aac',
-        '-b:a', '192k',
-        '-map', '0:v:0',
-        '-map', '1:a:0',
-        '-shortest',
+        "-c:v",
+        "copy",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "192k",
+        "-map",
+        "0:v:0",
+        "-map",
+        "1:a:0",
+        "-shortest",
       ])
       .output(outputPath)
-      .on('end', () => resolve(outputPath))
-      .on('error', (err) => reject(err))
+      .on("end", () => resolve(outputPath))
+      .on("error", (err) => reject(err))
       .run();
   });
 }
@@ -857,56 +965,75 @@ function runCommand(command, args, onLog) {
     const child = spawn(command, args, {
       cwd: __dirname,
       shell: false,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ["ignore", "pipe", "pipe"],
     });
 
-    child.stdout.on('data', (data) => onLog?.(data.toString().trim()));
-    child.stderr.on('data', (data) => onLog?.(data.toString().trim()));
-    child.on('error', reject);
-    child.on('close', (code) => {
+    child.stdout.on("data", (data) => onLog?.(data.toString().trim()));
+    child.stderr.on("data", (data) => onLog?.(data.toString().trim()));
+    child.on("error", reject);
+    child.on("close", (code) => {
       if (code === 0) {
         resolve();
       } else {
-        reject(new Error(`${command} ${args.join(' ')} exited with code ${code}`));
+        reject(
+          new Error(`${command} ${args.join(" ")} exited with code ${code}`),
+        );
       }
     });
   });
 }
 
 async function createStoryVideoRemotion(projectId, onProgress) {
-  onProgress({ status: 'remotion', message: 'Rendering video with Remotion...' });
-
-  await runCommand(process.execPath, ['scripts/render-remotion.js', projectId], (message) => {
-    if (message) console.log('Remotion render:', message);
+  onProgress({
+    status: "remotion",
+    message: "Rendering video with Remotion...",
   });
 
+  await runCommand(
+    process.execPath,
+    ["scripts/render-remotion.js", projectId],
+    (message) => {
+      if (message) console.log("Remotion render:", message);
+    },
+  );
+
   const projectDir = await getProjectDir(projectId);
-  const outputPath = path.join(projectDir, 'video.mp4');
-  onProgress({ status: 'done', message: 'Remotion video created!', progress: 100 });
+  const outputPath = path.join(projectDir, "video.mp4");
+  onProgress({
+    status: "done",
+    message: "Remotion video created!",
+    progress: 100,
+  });
   return outputPath;
 }
 
 async function createStoryVideoFfmpeg(projectId, onProgress) {
   const projectDir = await getProjectDir(projectId);
-  const imageDir = path.join(projectDir, 'images');
-  const audioPath = path.join(projectDir, 'audio.wav');
-  const srtPath = path.join(projectDir, 'subtitle.srt');
-  const outputPath = path.join(projectDir, 'video.mp4');
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'story-video-'));
+  const imageDir = path.join(projectDir, "images");
+  const audioPath = path.join(projectDir, "audio.wav");
+  const srtPath = path.join(projectDir, "subtitle.srt");
+  const outputPath = path.join(projectDir, "video.mp4");
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "story-video-"));
 
-  console.log('Video temp dir:', tempDir);
+  console.log("Video temp dir:", tempDir);
 
   try {
-    const srtContent = fs.readFileSync(srtPath, 'utf8');
-    console.log('SRT content length:', srtContent.length);
+    const srtContent = fs.readFileSync(srtPath, "utf8");
+    console.log("SRT content length:", srtContent.length);
     const srtData = parseSRT(srtContent);
-    console.log('Parsed SRT segments:', srtData.length);
-    const images = fs.readdirSync(imageDir).filter(f => /\.(png|jpg|jpeg|webp)$/i.test(f)).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-    console.log('Found images:', images.length);
+    console.log("Parsed SRT segments:", srtData.length);
+    const images = fs
+      .readdirSync(imageDir)
+      .filter((f) => /\.(png|jpg|jpeg|webp)$/i.test(f))
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    console.log("Found images:", images.length);
 
     const scenesData = srtData.map((item, index) => {
       let start_ms = srtTimeToMs(item.startTime);
-      let end_ms = index < srtData.length - 1 ? srtTimeToMs(srtData[index + 1].startTime) : srtTimeToMs(item.endTime) + 3000;
+      let end_ms =
+        index < srtData.length - 1
+          ? srtTimeToMs(srtData[index + 1].startTime)
+          : srtTimeToMs(item.endTime) + 3000;
       if (index === 0 && start_ms > 0) start_ms = 0;
       return {
         image: path.join(imageDir, images[index] || images[images.length - 1]),
@@ -916,67 +1043,96 @@ async function createStoryVideoFfmpeg(projectId, onProgress) {
       };
     });
 
-    onProgress({ status: 'clipping', message: `Creating ${scenesData.length} clips...` });
+    onProgress({
+      status: "clipping",
+      message: `Creating ${scenesData.length} clips...`,
+    });
 
     const clipPaths = [];
     for (let i = 0; i < scenesData.length; i++) {
-      const clipPath = await createImageClip(scenesData[i], i, scenesData.length, tempDir, imageDir);
+      const clipPath = await createImageClip(
+        scenesData[i],
+        i,
+        scenesData.length,
+        tempDir,
+        imageDir,
+      );
       clipPaths.push(clipPath);
     }
 
-    onProgress({ status: 'concatenating', message: 'Merging clips...' });
+    onProgress({ status: "concatenating", message: "Merging clips..." });
 
-    const tempVideo = path.join(tempDir, 'temp_concatenated.mp4');
+    const tempVideo = path.join(tempDir, "temp_concatenated.mp4");
     await concatenateClips(clipPaths, tempDir, tempVideo);
 
-    onProgress({ status: 'audio', message: 'Adding audio...' });
+    onProgress({ status: "audio", message: "Adding audio..." });
 
-    if (!fs.existsSync(audioPath)) throw new Error('Audio file not found');
+    if (!fs.existsSync(audioPath)) throw new Error("Audio file not found");
     await addAudio(tempVideo, audioPath, outputPath);
 
     fs.rmSync(tempDir, { recursive: true, force: true });
 
-    onProgress({ status: 'done', message: 'Video created!', progress: 100 });
+    onProgress({ status: "done", message: "Video created!", progress: 100 });
     return outputPath;
   } catch (error) {
-    if (fs.existsSync(tempDir)) fs.rmSync(tempDir, { recursive: true, force: true });
+    if (fs.existsSync(tempDir))
+      fs.rmSync(tempDir, { recursive: true, force: true });
     throw error;
   }
 }
 
 // Video generation endpoint
-app.post('/api/generate-video', async (req, res) => {
-  const { projectId, renderer = 'ffmpeg' } = req.body;
+app.post("/api/generate-video", async (req, res) => {
+  const { projectId, renderer = "ffmpeg" } = req.body;
 
   if (!projectId) {
-    return res.status(400).json({ success: false, error: 'Project ID is required' });
+    return res
+      .status(400)
+      .json({ success: false, error: "Project ID is required" });
   }
 
-  if (!['ffmpeg', 'remotion'].includes(renderer)) {
-    return res.status(400).json({ success: false, error: 'Invalid video renderer' });
+  if (!["ffmpeg", "remotion"].includes(renderer)) {
+    return res
+      .status(400)
+      .json({ success: false, error: "Invalid video renderer" });
   }
 
   try {
     const projectDir = await getProjectDir(projectId);
-    const audioPath = path.join(projectDir, 'audio.wav');
-    const srtPath = path.join(projectDir, 'subtitle.srt');
-    const imageDir = path.join(projectDir, 'images');
+    const audioPath = path.join(projectDir, "audio.wav");
+    const srtPath = path.join(projectDir, "subtitle.srt");
+    const imageDir = path.join(projectDir, "images");
 
-    if (!fs.existsSync(audioPath)) return res.status(400).json({ success: false, error: 'Audio not found' });
-    if (!fs.existsSync(srtPath)) return res.status(400).json({ success: false, error: 'Subtitle not found' });
-    if (!fs.existsSync(imageDir)) return res.status(400).json({ success: false, error: 'Images not found' });
+    if (!fs.existsSync(audioPath))
+      return res.status(400).json({ success: false, error: "Audio not found" });
+    if (!fs.existsSync(srtPath))
+      return res
+        .status(400)
+        .json({ success: false, error: "Subtitle not found" });
+    if (!fs.existsSync(imageDir))
+      return res
+        .status(400)
+        .json({ success: false, error: "Images not found" });
 
-    const images = fs.readdirSync(imageDir).filter(f => f.endsWith('.png'));
-    if (images.length === 0) return res.status(400).json({ success: false, error: 'No images found' });
+    const images = fs.readdirSync(imageDir).filter((f) => f.endsWith(".png"));
+    if (images.length === 0)
+      return res.status(400).json({ success: false, error: "No images found" });
 
-    const renderVideo = renderer === 'remotion' ? createStoryVideoRemotion : createStoryVideoFfmpeg;
+    const renderVideo =
+      renderer === "remotion"
+        ? createStoryVideoRemotion
+        : createStoryVideoFfmpeg;
     await renderVideo(projectId, (progress) => {
       console.log(`Video generation (${renderer}):`, progress.message);
     });
 
-    res.json({ success: true, renderer, videoUrl: `/api/project/${projectId}/video` });
+    res.json({
+      success: true,
+      renderer,
+      videoUrl: `/api/project/${projectId}/video`,
+    });
   } catch (error) {
-    console.error('Video generation error:', error);
+    console.error("Video generation error:", error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -984,36 +1140,54 @@ app.post('/api/generate-video', async (req, res) => {
 let remotionStudioProcess = null;
 const REMOTION_STUDIO_PORT = Number(process.env.REMOTION_STUDIO_PORT || 3001);
 
-app.post('/api/remotion-studio', async (req, res) => {
+app.post("/api/remotion-studio", async (req, res) => {
   const { projectId } = req.body;
 
   if (!projectId) {
-    return res.status(400).json({ success: false, error: 'Project ID is required' });
+    return res
+      .status(400)
+      .json({ success: false, error: "Project ID is required" });
   }
 
   try {
     const { propsPath } = await prepareRemotionProject(projectId);
+    console.log(propsPath, "props");
 
-    if (remotionStudioProcess && remotionStudioProcess.exitCode === null) {
-      remotionStudioProcess.kill();
+    console.log(REMOTION_STUDIO_PORT, "porti");
+    
+    // Kill process on port using fuser (more targeted)
+    try {
+      const { execSync } = await import("child_process");
+      execSync(`fuser -k ${REMOTION_STUDIO_PORT}/tcp 2>/dev/null || true`, { encoding: "utf8", stdio: "ignore" });
+      console.log("port killed");
+    } catch (err) {
+      console.log("port not in use or already killed");
     }
+    
+    remotionStudioProcess = spawn(
+      "npx",
+      [
+        "remotion",
+        "studio",
+        "remotion/index.jsx",
+        `--props=${propsPath}`,
+        `--port=${REMOTION_STUDIO_PORT}`,
+        "--no-open",
+      ],
+      {
+        cwd: __dirname,
+        shell: false,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
 
-    remotionStudioProcess = spawn('npx', [
-      'remotion',
-      'studio',
-      'remotion/index.jsx',
-      `--props=${propsPath}`,
-      `--port=${REMOTION_STUDIO_PORT}`,
-      '--no-open',
-    ], {
-      cwd: __dirname,
-      shell: false,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-
-    remotionStudioProcess.stdout.on('data', (data) => console.log('Remotion Studio:', data.toString().trim()));
-    remotionStudioProcess.stderr.on('data', (data) => console.log('Remotion Studio:', data.toString().trim()));
-    remotionStudioProcess.on('close', (code) => {
+    remotionStudioProcess.stdout.on("data", (data) =>
+      console.log("Remotion Studio:", data.toString().trim()),
+    );
+    remotionStudioProcess.stderr.on("data", (data) =>
+      console.log("Remotion Studio:", data.toString().trim()),
+    );
+    remotionStudioProcess.on("close", (code) => {
       console.log(`Remotion Studio exited with code ${code}`);
       remotionStudioProcess = null;
     });
@@ -1023,28 +1197,32 @@ app.post('/api/remotion-studio', async (req, res) => {
       studioUrl: `http://localhost:${REMOTION_STUDIO_PORT}`,
     });
   } catch (error) {
-    console.error('Remotion Studio error:', error);
+    console.error("Remotion Studio error:", error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-app.get('/api/project/:projectId/video', async (req, res) => {
+app.get("/api/project/:projectId/video", async (req, res) => {
   try {
     const projectDir = await getProjectDir(req.params.projectId);
-    const videoPath = path.join(projectDir, 'video.mp4');
+    const videoPath = path.join(projectDir, "video.mp4");
     await fsPromises.access(videoPath);
     res.sendFile(videoPath);
   } catch (error) {
-    res.status(404).send('Video not found');
+    res.status(404).send("Video not found");
   }
 });
 
-app.get('/api/project/:projectId/video-status', async (req, res) => {
+app.get("/api/project/:projectId/video-status", async (req, res) => {
   try {
     const projectDir = await getProjectDir(req.params.projectId);
-    const videoPath = path.join(projectDir, 'video.mp4');
+    const videoPath = path.join(projectDir, "video.mp4");
     const exists = fs.existsSync(videoPath);
-    res.json({ success: true, exists, videoUrl: exists ? `/api/project/${req.params.projectId}/video` : null });
+    res.json({
+      success: true,
+      exists,
+      videoUrl: exists ? `/api/project/${req.params.projectId}/video` : null,
+    });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
