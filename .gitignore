@@ -11,3 +11,4 @@ data/remotion-manifest.json
 out/
 data
 story.txt
+.codebase-memory

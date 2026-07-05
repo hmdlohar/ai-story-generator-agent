@@ -10,6 +10,7 @@ import { generateText } from "ai";
 import { SarvamAIClient } from "sarvamai";
 import OpenAI from "openai";
 import { fileURLToPath } from "url";
+import https from "https";
 import ffmpeg from "fluent-ffmpeg";
 import { prepareRemotionProject } from "./scripts/remotion-data.js";
 
@@ -345,10 +346,91 @@ app.post("/api/generate", async (req, res) => {
 });
 
 app.post("/api/tts", async (req, res) => {
-  const { text, speaker, language } = req.body;
+  const { text, speaker, language, provider, voice } = req.body;
 
   if (!text) {
     return res.status(400).json({ success: false, error: "Text is required" });
+  }
+
+  if (provider === "openrouter") {
+    const orKey = process.env.OPENROUTER_TTS_API_KEY || process.env.OPENROUTER_API_KEY;
+    if (!orKey) {
+      return res
+        .status(400)
+        .json({ success: false, error: "OPENROUTER_TTS_API_KEY not configured" });
+    }
+
+    try {
+      const postData = JSON.stringify({
+        model: "google/gemini-3.1-flash-tts-preview",
+        input: text,
+        voice: voice || "zephyr",
+      });
+
+      const audioBase64 = await new Promise((resolve, reject) => {
+        const req = https.request(
+          {
+            hostname: "openrouter.ai",
+            path: "/api/v1/audio/speech",
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${orKey}`,
+              "Content-Type": "application/json",
+              "Content-Length": Buffer.byteLength(postData),
+            },
+          },
+          (response) => {
+            const chunks = [];
+            response.on("data", (chunk) => chunks.push(chunk));
+            response.on("end", () => {
+              if (response.statusCode !== 200) {
+                const errBody = Buffer.concat(chunks).toString();
+                return reject(
+                  new Error(
+                    `OpenRouter TTS error (${response.statusCode}): ${errBody}`
+                  )
+                );
+              }
+              const pcm = Buffer.concat(chunks);
+              const sampleRate = 24000;
+              const channels = 1;
+              const bitsPerSample = 16;
+              const byteRate = sampleRate * channels * (bitsPerSample / 8);
+              const blockAlign = channels * (bitsPerSample / 8);
+              const wavHeader = Buffer.alloc(44);
+              wavHeader.write("RIFF", 0);
+              wavHeader.writeUInt32LE(36 + pcm.length, 4);
+              wavHeader.write("WAVE", 8);
+              wavHeader.write("fmt ", 12);
+              wavHeader.writeUInt32LE(16, 16);
+              wavHeader.writeUInt16LE(1, 20);
+              wavHeader.writeUInt16LE(channels, 22);
+              wavHeader.writeUInt32LE(sampleRate, 24);
+              wavHeader.writeUInt32LE(byteRate, 28);
+              wavHeader.writeUInt16LE(blockAlign, 32);
+              wavHeader.writeUInt16LE(bitsPerSample, 34);
+              wavHeader.write("data", 36);
+              wavHeader.writeUInt32LE(pcm.length, 40);
+              const wav = Buffer.concat([wavHeader, pcm]);
+              resolve(wav.toString("base64"));
+            });
+          }
+        );
+        req.on("error", reject);
+        req.write(postData);
+        req.end();
+      });
+
+      res.json({
+        success: true,
+        audio: audioBase64,
+        format: "wav",
+      });
+    } catch (error) {
+      console.error("Error generating OpenRouter TTS:", error);
+      res.status(500).json({ success: false, error: error.message });
+    }
+    return;
   }
 
   if (!sarvamClient) {
@@ -370,6 +452,7 @@ app.post("/api/tts", async (req, res) => {
     res.json({
       success: true,
       audio: response?.audios?.[0] || null,
+      format: "wav",
       request_id: response?.request_id,
     });
   } catch (error) {

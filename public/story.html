@@ -75,25 +75,52 @@
       <h2>Text to Speech</h2>
       <div class="form-row">
         <div class="form-group">
-          <label for="speaker">Speaker:</label>
-          <select id="speaker">
-            <option value="shubh">Shubh (Male)</option>
-            <option value="manan">Manan (Male)</option>
-            <option value="aditya">Aditya (Male)</option>
-            <option value="rahul">Rahul (Male)</option>
-            <option value="ritu" selected>Ritu (Female)</option>
-            <option value="priya">Priya (Female)</option>
-            <option value="neha">Neha (Female)</option>
-            <option value="ishita">Ishita (Female)</option>
-            <option value="shreya">Shreya (Female)</option>
+          <label for="ttsProvider">Provider:</label>
+          <select id="ttsProvider">
+            <option value="sarvam" selected>Sarvam</option>
+            <option value="openrouter">OpenRouter (Gemini TTS)</option>
           </select>
         </div>
-        <div class="form-group">
-          <label for="language">Language:</label>
-          <select id="language">
-            <option value="hi-IN" selected>Hindi</option>
-            <option value="en-IN">English</option>
-          </select>
+      </div>
+      <div id="sarvamOptions">
+        <div class="form-row">
+          <div class="form-group">
+            <label for="speaker">Speaker:</label>
+            <select id="speaker">
+              <option value="shubh">Shubh (Male)</option>
+              <option value="manan">Manan (Male)</option>
+              <option value="aditya">Aditya (Male)</option>
+              <option value="rahul">Rahul (Male)</option>
+              <option value="ritu" selected>Ritu (Female)</option>
+              <option value="priya">Priya (Female)</option>
+              <option value="neha">Neha (Female)</option>
+              <option value="ishita">Ishita (Female)</option>
+              <option value="shreya">Shreya (Female)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="language">Language:</label>
+            <select id="language">
+              <option value="hi-IN" selected>Hindi</option>
+              <option value="en-IN">English</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div id="openrouterOptions" style="display: none;">
+        <div class="form-row">
+          <div class="form-group">
+            <label for="orVoice">Voice:</label>
+            <select id="orVoice">
+              <option value="zephyr" selected>Zephyr</option>
+              <option value="alloy">Alloy</option>
+              <option value="echo">Echo</option>
+              <option value="fable">Fable</option>
+              <option value="onyx">Onyx</option>
+              <option value="nova">Nova</option>
+              <option value="shimmer">Shimmer</option>
+            </select>
+          </div>
         </div>
       </div>
       <button type="button" id="ttsBtn" class="btn-secondary">Generate Audio</button>
@@ -175,6 +202,9 @@
     const ttsBtn = document.getElementById('ttsBtn');
     const subtitleBtn = document.getElementById('subtitleBtn');
     const audioPlayer = document.getElementById('audioPlayer');
+    const ttsProvider = document.getElementById('ttsProvider');
+    const sarvamOptions = document.getElementById('sarvamOptions');
+    const openrouterOptions = document.getElementById('openrouterOptions');
     const subtitleOutput = document.getElementById('subtitleOutput');
     const imagePromptsSection = document.getElementById('imagePromptsSection');
     const imagePromptsBtn = document.getElementById('imagePromptsBtn');
@@ -404,6 +434,16 @@
       }
     });
 
+    ttsProvider.addEventListener('change', () => {
+      if (ttsProvider.value === 'openrouter') {
+        sarvamOptions.style.display = 'none';
+        openrouterOptions.style.display = 'block';
+      } else {
+        sarvamOptions.style.display = 'block';
+        openrouterOptions.style.display = 'none';
+      }
+    });
+
     ttsBtn.addEventListener('click', async () => {
       const text = outputTextarea.value;
       if (!text) return;
@@ -412,20 +452,26 @@
       ttsBtn.textContent = 'Generating Audio...';
       audioPlayer.style.display = 'none';
 
+      const provider = ttsProvider.value;
+      const body = { text, provider };
+      if (provider === 'openrouter') {
+        body.voice = document.getElementById('orVoice').value;
+      } else {
+        body.speaker = document.getElementById('speaker').value;
+        body.language = document.getElementById('language').value;
+      }
+
       try {
         const res = await fetch('/api/tts', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            text,
-            speaker: document.getElementById('speaker').value,
-            language: document.getElementById('language').value
-          })
+          body: JSON.stringify(body)
         });
         const data = await res.json();
 
         if (data.success && data.audio) {
-          audioPlayer.src = `data:audio/wav;base64,${data.audio}`;
+          const audioFormat = data.format || 'wav';
+          audioPlayer.src = `data:audio/${audioFormat};base64,${data.audio}`;
           audioPlayer.style.display = 'block';
           audioPlayer.play();
           saveAudio(data.audio);
