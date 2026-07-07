@@ -146,7 +146,7 @@
           <label for="imageProvider">Provider:</label>
           <select id="imageProvider">
             <option value="comfy">ComfyUI</option>
-            <option value="openrouter">OpenRouter (Flux)</option>
+            <option value="runpod">RunPod</option>
           </select>
         </div>
       </div>
@@ -536,7 +536,7 @@
         const res = await fetch('/api/image-prompts', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ subtitle })
+          body: JSON.stringify({ subtitle, projectId })
         });
         const data = await res.json();
 
@@ -573,6 +573,12 @@
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ projectId, provider: selectedProvider })
+          });
+        } else if (selectedProvider === 'runpod') {
+          res = await fetch('/api/generate-images-runpod', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ projectId })
           });
         } else {
           res = await fetch('/api/generate-images-openrouter', {

@@ -31,6 +31,8 @@ const OPENROUTER_IMAGE_MODEL =
   process.env.OPENROUTER_IMAGE_MODEL || "black-forest-labs/flux.2-klein-4b";
 const IMAGE_WIDTH = 810;
 const IMAGE_HEIGHT = 1440;
+const RUNPOD_API_KEY = process.env.RUNPOD_API_KEY || "";
+const RUNPOD_ENDPOINT = process.env.RUNPOD_ENDPOINT || "https://api.runpod.ai/v2/2ohcl4mmhwo9qt";
 
 const AVAILABLE_MODELS = (process.env.AVAILABLE_MODELS || "")
   .split(",")
@@ -113,66 +115,59 @@ const SYSTEM_PROMPT_IMAGE = `You are an expert screenplay writer and visual plan
 
 Your job:
 
-Convert SRT subtitles into image generation prompts.
+Convert SRT subtitles into image generation prompts using a placeholder system for consistency.
 
-Output must be a valid JSON array of strings.
+Output must be a valid JSON object with TWO keys:
 
-One image per subtitle index.
+1. "entities" - An object mapping placeholder names to their full descriptions
+2. "prompts" - An array of prompt strings using those placeholders
 
-Never merge or skip subtitle numbers.
+ENTITY NAMING CONVENTION:
+- Characters: $character1, $character2, $character3, etc.
+- Scenes/Environments: $scene1, $scene2, $scene3, etc.
+- Objects: $object1, $object2, $object3, etc.
 
-Each string must begin with:
-"Generate image X: ..."
+ENTITY DEFINITION RULES:
+- Each entity must be described ONCE with full detail
+- Character entities must include: physical traits, clothing, age, distinguishing features
+- Scene entities must include: location type, lighting, time of day, atmosphere, key elements
+- Object entities must include: appearance, size, material, color
+- Do NOT include style/format instructions in entities
 
-All prompts must be written in English.
+PROMPT RULES:
+- One prompt per subtitle index
+- Never merge or skip subtitle numbers
+- Each prompt must begin with: "Generate image X: ..."
+- Use placeholders like $character1, $scene1 instead of full descriptions
+- Prompts MUST include style/format at the end (these are NOT in entities)
+- All prompts must be written in English
 
-CRITICAL RULES:
+STYLE TO INCLUDE IN EACH PROMPT (not in entities):
+- "bright Indian children's book illustration style"
+- "portrait 9:16 format"
+- "no text in image"
+- "warm sunlight"
+- "rounded shapes"
+- "cheerful vibrant palette"
+- "safe for ages 3-7"
 
-The image model is stateless.
-
-Never use phrases like "same character", "previous scene", "as before".
-
-Every prompt must fully describe characters again.
-
-Maintain visual continuity by repeating defining traits in each prompt.
-
-Always include:
-
-Character physical traits
-
-Clothing details
-
-Environment
-
-Lighting
-
-Mood
-
-Art style
-
-Portrait 9:16 format
-
-No text in image
-
-Style Guidelines:
-
-Bright Indian children's book illustration
-
-North Indian village context
-
-Warm sunlight
-
-Rounded shapes
-
-Cheerful vibrant palette
-
-Safe for ages 3-7
-
-No graphic violence
+EXAMPLE OUTPUT FORMAT:
+{
+  "entities": {
+    "$character1": "a young Indian boy, age 6, short black hair, round face, big brown eyes, wearing bright red kurta and brown pants",
+    "$character2": "an elderly Indian man, white beard, round glasses, kind wrinkled face, wearing white dhoti, holding wooden walking stick",
+    "$scene1": "sunny North Indian village street, mud houses with thatched roofs, green rice paddies in background, warm golden morning light",
+    "$scene2": "simple village home interior, clay walls, wooden charpoy cot in corner, soft natural window light, brass pot on floor"
+  },
+  "prompts": [
+    "Generate image 1: $character1 walking happily through $scene1, bright Indian children's illustration, portrait 9:16, warm sunlight, no text",
+    "Generate image 2: $character1 talking to $character2 inside $scene2, bright Indian children's illustration, portrait 9:16, warm sunlight, no text"
+  ]
+}
 
 Do not explain anything.
 Do not add commentary.
-Only output the JSON array.`;
+Only output the JSON object.`;
 
 async function getProjectDir(projectId) {
   const dir = path.join(STORAGE_ROOT, "projects", projectId);
@@ -513,7 +508,7 @@ app.post("/api/subtitle", async (req, res) => {
 });
 
 app.post("/api/image-prompts", async (req, res) => {
-  const { subtitle } = req.body;
+  const { subtitle, projectId } = req.body;
 
   if (!subtitle) {
     return res
@@ -533,7 +528,56 @@ app.post("/api/image-prompts", async (req, res) => {
       prompt: subtitle,
     });
 
-    res.json({ success: true, prompts: result.text.trim() });
+    let responseText = result.text.trim();
+    let finalPrompts;
+    let entities = null;
+
+    try {
+      const parsed = JSON.parse(responseText);
+
+      if (parsed.entities && parsed.prompts) {
+        entities = parsed.entities;
+        finalPrompts = parsed.prompts.map((prompt) => {
+          let resolved = prompt;
+          for (const [placeholder, value] of Object.entries(parsed.entities)) {
+            const escapedPlaceholder = placeholder.replace(
+              /[.*+?^${}()|[\]\\]/g,
+              "\\$&",
+            );
+            resolved = resolved.replace(
+              new RegExp(escapedPlaceholder, "g"),
+              value,
+            );
+          }
+          return resolved;
+        });
+      } else if (Array.isArray(parsed)) {
+        finalPrompts = parsed;
+      } else {
+        throw new Error("Unexpected format");
+      }
+    } catch (parseError) {
+      const arrayMatch = responseText.match(/\[[\s\S]*\]/);
+      if (arrayMatch) {
+        finalPrompts = JSON.parse(arrayMatch[0]);
+      } else {
+        throw new Error("Could not parse image prompts response");
+      }
+    }
+
+    if (projectId && entities) {
+      try {
+        const projectDir = await getProjectDir(projectId);
+        await fsPromises.writeFile(
+          path.join(projectDir, "image-entities.json"),
+          JSON.stringify(entities, null, 2),
+        );
+      } catch (saveError) {
+        console.error("Failed to save entity definitions:", saveError.message);
+      }
+    }
+
+    res.json({ success: true, prompts: JSON.stringify(finalPrompts) });
   } catch (error) {
     console.error("Error generating image prompts:", error);
     res.status(500).json({ success: false, error: error.message });
@@ -578,9 +622,9 @@ app.post("/api/generate-images", async (req, res) => {
       .json({ success: false, error: "Project ID is required" });
   }
 
-  if (provider === "openrouter" || !COMFY_URL) {
+  if (provider === "runpod" || !COMFY_URL) {
     return res.redirect(
-      `/api/generate-images-openrouter?projectId=${projectId}`,
+      `/api/generate-images-runpod?projectId=${projectId}`,
     );
   }
 
@@ -784,6 +828,123 @@ app.post("/api/generate-images-openrouter", async (req, res) => {
           const base64Data = imageUrl.includes(",")
             ? imageUrl.split(",")[1]
             : imageUrl;
+          const outputPath = path.join(imageDir, `${i + 1}.png`);
+          await fsPromises.writeFile(outputPath, base64Data, "base64");
+          console.log(`Image ${i + 1} saved to ${outputPath}`);
+        } else {
+          console.log(
+            `Image ${i + 1} result:`,
+            JSON.stringify(data).substring(0, 500),
+          );
+          throw new Error("No image in response");
+        }
+      } catch (err) {
+        console.error(`Error generating image ${i + 1}:`, err.message);
+        return res.status(500).json({
+          success: false,
+          error: `Failed at image ${i + 1}: ${err.message}`,
+          completed: i,
+          total: totalCount,
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      completed: totalCount,
+      total: totalCount,
+    });
+  } catch (error) {
+    console.error("Error generating images:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post("/api/generate-images-runpod", async (req, res) => {
+  const { projectId } = req.body;
+
+  if (!projectId) {
+    return res
+      .status(400)
+      .json({ success: false, error: "Project ID is required" });
+  }
+
+  if (!RUNPOD_API_KEY) {
+    return res
+      .status(400)
+      .json({ success: false, error: "RUNPOD_API_KEY not configured" });
+  }
+
+  try {
+    const projectDir = await getProjectDir(projectId);
+    const promptsPath = path.join(projectDir, "image-prompts.json");
+    const imageDir = path.join(projectDir, "images");
+
+    await fsPromises.mkdir(imageDir, { recursive: true });
+
+    const promptsContent = await fsPromises.readFile(promptsPath, "utf8");
+    let prompts;
+    try {
+      prompts = JSON.parse(promptsContent);
+    } catch {
+      const match = promptsContent.match(/\[[\s\S]*\]/);
+      if (match) {
+        prompts = JSON.parse(match[0]);
+      } else {
+        throw new Error("Invalid prompts format");
+      }
+    }
+
+    const existingFiles = await fsPromises.readdir(imageDir);
+    const completedCount = existingFiles.filter((f) =>
+      f.endsWith(".png"),
+    ).length;
+
+    const startIndex = completedCount;
+    const totalCount = prompts.length;
+
+    if (startIndex >= totalCount) {
+      return res.json({
+        success: true,
+        message: "All images already generated",
+        completed: totalCount,
+        total: totalCount,
+      });
+    }
+
+    console.log(
+      `Generating images ${startIndex + 1} to ${totalCount} via RunPod...`,
+    );
+
+    for (let i = startIndex; i < totalCount; i++) {
+      const prompt = prompts[i];
+      console.log(`Generating image ${i + 1}/${totalCount}`);
+
+      try {
+        const response = await fetch(`${RUNPOD_ENDPOINT}/runsync`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${RUNPOD_API_KEY}`,
+          },
+          body: JSON.stringify({
+            input: {
+              prompt: prompt,
+              width: 512,
+              height: 922,
+            },
+          }),
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`RunPod API error: ${response.status} - ${errorText}`);
+        }
+
+        const data = await response.json();
+
+        if (data.output?.images?.[0]?.base64) {
+          const base64Data = data.output.images[0].base64;
           const outputPath = path.join(imageDir, `${i + 1}.png`);
           await fsPromises.writeFile(outputPath, base64Data, "base64");
           console.log(`Image ${i + 1} saved to ${outputPath}`);
