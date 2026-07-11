@@ -77,12 +77,12 @@
         <div class="form-group">
           <label for="ttsProvider">Provider:</label>
           <select id="ttsProvider">
-            <option value="sarvam" selected>Sarvam</option>
-            <option value="openrouter">OpenRouter (Gemini TTS)</option>
+            <option value="sarvam">Sarvam</option>
+            <option value="openrouter" selected>OpenRouter (Gemini TTS)</option>
           </select>
         </div>
       </div>
-      <div id="sarvamOptions">
+      <div id="sarvamOptions" style="display: none;">
         <div class="form-row">
           <div class="form-group">
             <label for="speaker">Speaker:</label>
@@ -107,7 +107,7 @@
           </div>
         </div>
       </div>
-      <div id="openrouterOptions" style="display: none;">
+      <div id="openrouterOptions">
         <div class="form-row">
           <div class="form-group">
             <label for="orVoice">Voice:</label>
@@ -129,6 +129,15 @@
 
     <div class="tts-section" id="subtitleSection" style="display: none;">
       <h2>Subtitle (SRT)</h2>
+      <div class="form-row" style="margin-bottom: 1rem;">
+        <div class="form-group">
+          <label for="subtitleProvider">Provider:</label>
+          <select id="subtitleProvider">
+            <option value="openai" selected>OpenAI Whisper</option>
+            <option value="colab">Colab Whisper</option>
+          </select>
+        </div>
+      </div>
       <button type="button" id="subtitleBtn" class="btn-secondary">Generate Subtitle</button>
       <textarea class="output" id="subtitleOutput" readonly style="display: none;"></textarea>
     </div>
@@ -161,8 +170,8 @@
         <div class="form-group">
           <label for="videoRenderer">Render Engine:</label>
           <select id="videoRenderer">
-            <option value="ffmpeg" selected>FFmpeg</option>
-            <option value="remotion">Remotion</option>
+            <option value="ffmpeg">FFmpeg</option>
+            <option value="remotion" selected>Remotion</option>
           </select>
         </div>
       </div>
@@ -493,6 +502,8 @@
         return;
       }
 
+      const provider = document.getElementById('subtitleProvider').value;
+
       subtitleBtn.disabled = true;
       subtitleBtn.textContent = 'Generating Subtitle...';
       subtitleOutput.style.display = 'none';
@@ -501,7 +512,7 @@
         const res = await fetch('/api/subtitle', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ audio: audioBase64 })
+          body: JSON.stringify({ audio: audioBase64, provider })
         });
         const data = await res.json();
 

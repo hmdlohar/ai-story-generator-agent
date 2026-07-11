@@ -33,6 +33,7 @@ const IMAGE_WIDTH = 810;
 const IMAGE_HEIGHT = 1440;
 const RUNPOD_API_KEY = process.env.RUNPOD_API_KEY || "";
 const RUNPOD_ENDPOINT = process.env.RUNPOD_ENDPOINT || "https://api.runpod.ai/v2/2ohcl4mmhwo9qt";
+const COLAB_WHISPER_URL = process.env.COLAB_WHISPER_URL || "";
 
 const AVAILABLE_MODELS = (process.env.AVAILABLE_MODELS || "")
   .split(",")
@@ -466,20 +467,78 @@ function vttToSrt(vtt) {
   return srt;
 }
 
+function formatSrtTime(seconds) {
+  const ms = Math.floor((seconds % 1) * 1000);
+  const totalSeconds = Math.floor(seconds);
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")},${String(ms).padStart(3, "0")}`;
+}
+
+function segmentsToSrt(segments) {
+  return segments
+    .map((seg, i) => {
+      const start = formatSrtTime(seg.start);
+      const end = formatSrtTime(seg.end);
+      return `${i + 1}\n${start} --> ${end}\n${seg.text.trim()}`;
+    })
+    .join("\n\n");
+}
+
 app.post("/api/subtitle", async (req, res) => {
-  const { audio } = req.body;
+  const { audio, provider } = req.body;
 
   if (!audio) {
     return res.status(400).json({ success: false, error: "Audio is required" });
   }
 
-  if (!process.env.OPENAI_API_KEY) {
-    return res
-      .status(400)
-      .json({ success: false, error: "OPENAI_API_KEY not configured" });
-  }
-
   try {
+    if (provider === "colab") {
+      if (!COLAB_WHISPER_URL) {
+        return res
+          .status(400)
+          .json({ success: false, error: "COLAB_WHISPER_URL not configured" });
+      }
+
+      const response = await fetch(`${COLAB_WHISPER_URL}/transcribe`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "ngrok-skip-browser-warning": "1",
+        },
+        body: JSON.stringify({
+          base64_data: `data:audio/wav;base64,${audio}`,
+        }),
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        console.error("Colab whisper error:", errText);
+        return res
+          .status(500)
+          .json({ success: false, error: `Colab whisper: ${response.status}` });
+      }
+
+      const data = await response.json();
+
+      if (data.status !== "success" || !data.transcription?.segments) {
+        return res
+          .status(500)
+          .json({ success: false, error: "Colab whisper: unexpected response" });
+      }
+
+      const srt = segmentsToSrt(data.transcription.segments);
+
+      return res.json({ success: true, subtitle: srt });
+    }
+
+    if (!process.env.OPENAI_API_KEY) {
+      return res
+        .status(400)
+        .json({ success: false, error: "OPENAI_API_KEY not configured" });
+    }
+
     const tempDir = path.join(__dirname, "temp");
     await fsPromises.mkdir(tempDir, { recursive: true });
     const tempFile = path.join(tempDir, `audio_${Date.now()}.wav`);
@@ -1327,7 +1386,7 @@ async function createStoryVideoFfmpeg(projectId, onProgress) {
 
 // Video generation endpoint
 app.post("/api/generate-video", async (req, res) => {
-  const { projectId, renderer = "ffmpeg" } = req.body;
+  const { projectId, renderer = "remotion" } = req.body;
 
   if (!projectId) {
     return res
