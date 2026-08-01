@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Schedule - Story Generator</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; max-width: 1100px; margin: 0 auto; padding: 2rem; color: #1f2937; }
+    header.top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; gap: 1rem; flex-wrap: wrap; }
+    header.top h1 { font-size: 1.4rem; }
+    header.top a { font-size: 0.9rem; color: #2563eb; text-decoration: none; }
+    .summary { color: #6b7280; font-size: 0.88rem; margin-bottom: 1rem; display: flex; gap: 1.2rem; flex-wrap: wrap; align-items: center; }
+    .summary .stat { display: flex; align-items: center; gap: 0.35rem; }
+    .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; }
+    .dot.available { background: #9ca3af; }
+    .dot.booked { background: #2563eb; }
+    .dot.past { background: #e5e7eb; border: 1px solid #d1d5db; }
+    .controls { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; margin-bottom: 1rem; }
+    .controls label { font-size: 0.85rem; color: #555; display: flex; align-items: center; gap: 0.4rem; }
+    input[type="date"], select { padding: 0.45rem 0.6rem; border: 1px solid #ccc; border-radius: 8px; font-size: 0.9rem; background: #fff; }
+    button.btn { padding: 0.5rem 0.9rem; border: 1px solid #ccc; background: #fff; border-radius: 8px; cursor: pointer; font-size: 0.85rem; }
+    button.btn:hover { background: #f9fafb; }
+    button.btn.primary { background: #2563eb; color: #fff; border-color: #2563eb; }
+    button.btn.primary:hover { background: #1d4ed8; }
+
+    .grid { display: flex; flex-direction: column; gap: 0.6rem; }
+    .day { display: grid; grid-template-columns: 130px 1fr 1fr; gap: 0.6rem; align-items: stretch; }
+    .day-head { display: flex; flex-direction: column; justify-content: center; padding: 0.7rem 0.8rem; border-radius: 10px; background: #f3f4f6; }
+    .day-head .dw { font-size: 0.72rem; color: #6b7280; text-transform: uppercase; letter-spacing: 0.03em; }
+    .day-head .dd { font-weight: 700; font-size: 0.95rem; }
+    .day-head.today { background: #fef3c7; }
+
+    .slot { border: 1px solid #e5e7eb; border-radius: 10px; padding: 0.7rem 0.85rem; background: #fff; display: flex; flex-direction: column; gap: 0.3rem; min-height: 78px; }
+    .slot .time { font-weight: 700; font-size: 0.9rem; display: flex; align-items: center; gap: 0.4rem; }
+    .slot .badge { font-size: 0.66rem; padding: 0.1rem 0.4rem; border-radius: 4px; font-weight: 700; text-transform: uppercase; }
+    .slot .badge.free { background: #f3f4f6; color: #6b7280; }
+    .slot .badge.booked { background: #dbeafe; color: #1d4ed8; }
+    .slot .badge.past { background: #f3f4f6; color: #9ca3af; }
+    .slot .detail { font-size: 0.78rem; color: #4b5563; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .slot .detail a { color: #2563eb; text-decoration: none; }
+    .slot .actions { display: flex; gap: 0.4rem; margin-top: auto; }
+    .slot .actions button { font-size: 0.74rem; padding: 0.25rem 0.5rem; border: 1px solid #d1d5db; background: #fff; border-radius: 6px; cursor: pointer; }
+    .slot .actions button:hover { background: #f9fafb; }
+    .slot .actions button.danger { color: #b91c1c; border-color: #fecaca; }
+    .slot.past { opacity: 0.55; }
+    .slot.booked { border-color: #bfdbfe; background: #f0f7ff; }
+    .loading { color: #9ca3af; padding: 2rem; text-align: center; }
+    .empty { color: #9ca3af; padding: 2rem; text-align: center; }
+  </style>
+</head>
+<body>
+  <header class="top">
+    <h1>📅 Publishing Schedule</h1>
+    <a href="/index.html">← Home</a>
+  </header>
+  <div class="summary" id="summary"></div>
+
+  <div class="controls">
+    <label>From <input type="date" id="fromDate"></label>
+    <label>Days
+      <select id="days">
+        <option value="7">7</option>
+        <option value="14" selected>14</option>
+        <option value="30">30</option>
+        <option value="60">60</option>
+      </select>
+    </label>
+    <button class="btn" id="refresh">↻ Refresh</button>
+    <button class="btn primary" id="bookNext">⚡ Book next free slot</button>
+    <span style="flex:1"></span>
+    <a href="/queue.html" style="font-size:0.85rem;color:#2563eb;text-decoration:none">▤ Story Queue →</a>
+  </div>
+
+  <div id="grid" class="grid"></div>
+
+  <script>
+    const DOW = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+    const MON = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    const $ = (id) => document.getElementById(id);
+
+    function todayYMD() {
+      const d = new Date();
+      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+    }
+
+    async function api(url, opts) {
+      const r = await fetch(url, opts);
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || !data.success) throw new Error(data.error || `HTTP ${r.status}`);
+      return data;
+    }
+
+    async function load() {
+      const from = $("fromDate").value || todayYMD();
+      const days = $("days").value;
+      $("grid").innerHTML = `<div class="loading">Loading…</div>`;
+      try {
+        const data = await api(`/api/schedule?from=${encodeURIComponent(from)}&days=${days}`);
+        render(data.slots);
+      } catch (e) {
+        $("grid").innerHTML = `<div class="empty">Error: ${e.message}</div>`;
+      }
+    }
+
+    function groupByDay(slots) {
+      const map = new Map();
+      for (const s of slots) {
+        if (!map.has(s.date)) map.set(s.date, []);
+        map.get(s.date).push(s);
+      }
+      return map;
+    }
+
+    function render(slots) {
+      const today = todayYMD();
+      const days = groupByDay(slots);
+      let booked = 0, free = 0, past = 0;
+      for (const s of slots) { if (s.past) past++; else if (s.booked) booked++; else free++; }
+      $("summary").innerHTML = `
+        <span class="stat"><span class="dot booked"></span> Booked: <b>${booked}</b></span>
+        <span class="stat"><span class="dot available"></span> Available: <b>${free}</b></span>
+        <span class="stat"><span class="dot past"></span> Past: <b>${past}</b></span>
+      `;
+
+      const grid = $("grid");
+      grid.innerHTML = "";
+      for (const [date, daySlots] of days) {
+        const d = new Date(date + "T00:00:00");
+        const head = document.createElement("div");
+        head.className = "day-head" + (date === today ? " today" : "");
+        head.innerHTML = `<span class="dw">${DOW[d.getDay()]}</span><span class="dd">${MON[d.getMonth()]} ${d.getDate()}</span>`;
+        const wrap = document.createElement("div");
+        wrap.className = "day";
+        wrap.appendChild(head);
+        for (const s of daySlots) wrap.appendChild(renderSlot(s));
+        grid.appendChild(wrap);
+      }
+    }
+
+    function renderSlot(s) {
+      const el = document.createElement("div");
+      el.className = "slot" + (s.past ? " past" : "") + (s.booked ? " booked" : "");
+      const badge = s.past ? "past" : (s.booked ? "booked" : "free");
+      const badgeText = s.past ? "Past" : (s.booked ? "Booked" : "Free");
+      let detail = "";
+      if (s.booked && s.booking) {
+        const b = s.booking;
+        const parts = [];
+        if (b.title) parts.push(b.title);
+        if (b.projectId) parts.push(`<a href="/story.html?projectId=${encodeURIComponent(b.projectId)}">${b.projectId}</a>`);
+        if (b.platform) parts.push(b.platform);
+        detail = parts.join(" · ");
+      }
+      let actions = "";
+      if (!s.past && !s.booked) {
+        actions = `<div class="actions"><button onclick="book('${s.slotId}')">Book</button></div>`;
+      } else if (!s.past && s.booked) {
+        actions = `<div class="actions"><button class="danger" onclick="release('${s.slotId}')">Release</button></div>`;
+      }
+      el.innerHTML = `
+        <div class="time">${s.label} <span class="badge ${badge}">${badgeText}</span></div>
+        <div class="detail">${detail || (s.past ? "—" : "available")}</div>
+        ${actions}
+      `;
+      return el;
+    }
+
+    async function book(slotId) {
+      const title = prompt("Title / note for this slot (optional):", "");
+      if (title === null) return;
+      try {
+        await api("/api/schedule/book", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ slotId, title: title.trim() || undefined }),
+        });
+        load();
+      } catch (e) { alert("Book failed: " + e.message); }
+    }
+
+    async function release(slotId) {
+      if (!confirm(`Release slot ${slotId}?`)) return;
+      try {
+        await api("/api/schedule/release", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ slotId }),
+        });
+        load();
+      } catch (e) { alert("Release failed: " + e.message); }
+    }
+
+    $("refresh").onclick = load;
+    $("days").onchange = load;
+    $("fromDate").onchange = load;
+    $("fromDate").value = todayYMD();
+    $("bookNext").onclick = async () => {
+      const title = prompt("Title / note for the booked slot (optional):", "");
+      if (title === null) return;
+      try {
+        const data = await api("/api/schedule/book-next", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ count: 1, title: title.trim() || undefined }),
+        });
+        alert(`Booked ${data.booked} slot: ${data.slots[0].date} ${data.slots[0].label}`);
+        load();
+      } catch (e) { alert("Book-next failed: " + e.message); }
+    };
+
+    load();
+  </script>
+</body>
+</html>

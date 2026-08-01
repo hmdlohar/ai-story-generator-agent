@@ -1,0 +1,122 @@
+{
+  "1": {
+    "inputs": {
+      "prompt": "Generate image 3: a group of forest animals: a gentle deer, a nervous monkey, a huge elephant, a colorful peacock, and a tiny squirrel, all with worried eyes and trembling postures, standing close together gathered together in a forest clearing under a giant banyan tree, with a flat mossy stone in the middle, surrounded by tree roots and green grass, soft morning light, talking seriously with worried faces, bright Indian children's book illustration style, portrait 9:16 format, no text in image, warm sunlight, rounded shapes, cheerful vibrant palette, safe for ages 3-7",
+      "negative_prompt": "",
+      "width": 0,
+      "height": 0,
+      "batch_size": 1,
+      "clip": [
+        "4",
+        0
+      ],
+      "vae": [
+        "7",
+        0
+      ]
+    },
+    "class_type": "TextEncodeMageFlowEdit",
+    "_meta": {
+      "title": "TextEncodeMageFlowEdit"
+    }
+  },
+  "3": {
+    "inputs": {
+      "seed": 38012638478053,
+      "steps": 4,
+      "cfg": 1.5,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1,
+      "model": [
+        "9",
+        0
+      ],
+      "positive": [
+        "1",
+        0
+      ],
+      "negative": [
+        "1",
+        1
+      ],
+      "latent_image": [
+        "10",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "4": {
+    "inputs": {
+      "clip_name": "qwen3vl_4b_bf16.safetensors",
+      "type": "stable_diffusion",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "5": {
+    "inputs": {
+      "samples": [
+        "3",
+        0
+      ],
+      "vae": [
+        "7",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "7": {
+    "inputs": {
+      "vae_name": "mage_flow_vae_bf16.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "8": {
+    "inputs": {
+      "images": [
+        "5",
+        0
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "Preview Image"
+    }
+  },
+  "9": {
+    "inputs": {
+      "unet_name": "diffusion_models/mage_flow_turbo_int8_convrot.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  },
+  "10": {
+    "inputs": {
+      "width": 544,
+      "height": 1080,
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "Empty Latent Image"
+    }
+  }
+}

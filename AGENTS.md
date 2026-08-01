@@ -13,3 +13,9 @@
   - Static files (public/)
   - API endpoints returning JSON
 - No HTML string interpolation in server.js
+
+### Running the app
+- The dev server is started by the user via `npm run dev` (nodemon server.js)
+- Do NOT start the server yourself; it is already running on `http://localhost:3000`
+- Do NOT kill the running server
+- Verify endpoints with `curl http://localhost:3000/...` against the already-running instance

@@ -12,3 +12,5 @@ out/
 data
 story.txt
 .codebase-memory
+.commandcode
+temp/

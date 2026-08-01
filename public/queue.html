@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Story Queue - Story Generator</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; max-width: 1100px; margin: 0 auto; padding: 2rem; color: #1f2937; }
+    header.top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; gap: 1rem; flex-wrap: wrap; }
+    header.top h1 { font-size: 1.4rem; }
+    header.top a { font-size: 0.9rem; color: #2563eb; text-decoration: none; }
+    .summary { color: #6b7280; font-size: 0.9rem; margin-bottom: 1rem; }
+    .summary span { margin-right: 1rem; }
+    .summary .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 0.3rem; vertical-align: middle; }
+    .dot.pending { background: #9ca3af; }
+    .dot.generating { background: #2563eb; }
+    .dot.generated { background: #16a34a; }
+    .dot.failed { background: #dc2626; }
+
+    .controls { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; margin-bottom: 1rem; }
+    .controls label { font-size: 0.85rem; color: #555; display: flex; align-items: center; gap: 0.4rem; }
+    select { padding: 0.45rem 0.6rem; border: 1px solid #ccc; border-radius: 8px; font-size: 0.9rem; background: #fff; }
+    .filters { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+    .filters button { padding: 0.35rem 0.75rem; border: 1px solid #ccc; background: #fff; border-radius: 8px; cursor: pointer; font-size: 0.82rem; }
+    .filters button.active { background: #2563eb; color: #fff; border-color: #2563eb; }
+    .spacer { flex: 1; }
+
+    .list { display: flex; flex-direction: column; gap: 0.6rem; }
+    .row { display: flex; align-items: center; gap: 0.9rem; padding: 0.85rem 1rem; border: 1px solid #e5e7eb; border-radius: 10px; background: #fff; }
+    .row .idx { color: #9ca3af; font-size: 0.8rem; width: 1.6rem; text-align: right; flex-shrink: 0; }
+    .row .info { flex: 1; min-width: 0; }
+    .row .title { font-weight: 600; font-size: 0.95rem; }
+    .row .about { color: #6b7280; font-size: 0.82rem; margin-top: 0.15rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .row .meta { font-size: 0.75rem; color: #9ca3af; margin-top: 0.2rem; }
+    .status { font-size: 0.72rem; padding: 0.15rem 0.5rem; border-radius: 4px; font-weight: 600; text-transform: capitalize; flex-shrink: 0; }
+    .status.pending { background: #f3f4f6; color: #6b7280; }
+    .status.generating { background: #dbeafe; color: #1d4ed8; }
+    .status.generated { background: #dcfce7; color: #166534; }
+    .status.failed { background: #fee2e2; color: #991b1b; }
+    .actions { display: flex; gap: 0.4rem; flex-shrink: 0; }
+    .btn { padding: 0.4rem 0.8rem; border-radius: 8px; border: none; cursor: pointer; font-size: 0.82rem; text-decoration: none; }
+    .btn.primary { background: #2563eb; color: #fff; }
+    .btn.primary:hover { background: #1d4ed8; }
+    .btn.primary:disabled { background: #93c5fd; cursor: not-allowed; }
+    .btn.ghost { background: #fff; color: #374151; border: 1px solid #ccc; }
+    .btn.ghost:hover { background: #f9fafb; }
+    .btn.ok { background: #059669; color: #fff; }
+    .btn.ok:hover { background: #047857; }
+
+    .progressbar { width: 100%; height: 4px; background: #e5e7eb; border-radius: 2px; margin-top: 0.4rem; overflow: hidden; }
+    .progressbar > div { height: 100%; background: #2563eb; transition: width .2s; }
+    .empty { text-align: center; padding: 3rem 1rem; color: #6b7280; }
+    .error { color: #dc2626; padding: 1rem; background: #fef2f2; border-radius: 8px; margin-bottom: 1rem; font-size: 0.85rem; }
+  </style>
+</head>
+<body>
+  <header class="top">
+    <h1>Story Queue</h1>
+    <a href="/">&larr; Back to stories</a>
+  </header>
+
+  <div class="summary" id="summary"></div>
+
+  <div class="controls">
+    <label>Template
+      <select id="template"></select>
+    </label>
+    <div class="filters" id="filters">
+      <button data-filter="all" class="active">All</button>
+      <button data-filter="pending">Pending</button>
+      <button data-filter="generating">Generating</button>
+      <button data-filter="generated">Generated</button>
+      <button data-filter="failed">Failed</button>
+    </div>
+    <div class="spacer"></div>
+    <button class="btn ok" id="startAllBtn">Start all pending</button>
+  </div>
+
+  <div class="error" id="error" style="display:none;"></div>
+  <div class="list" id="list"></div>
+
+  <script>
+    const listEl = document.getElementById('list');
+    const summaryEl = document.getElementById('summary');
+    const templateSelect = document.getElementById('template');
+    const filtersEl = document.getElementById('filters');
+    const startAllBtn = document.getElementById('startAllBtn');
+    const errorDiv = document.getElementById('error');
+
+    const STEP_INDEX = { input: 1, story: 2, audio: 3, subtitle: 4, imagePrompts: 5, images: 6, video: 7, ytSeo: 8, done: 8 };
+    let stories = [];
+    let templates = [];
+    let filter = 'all';
+    let pollTimer = null;
+
+    function showError(msg) { errorDiv.textContent = msg; errorDiv.style.display = 'block'; }
+    function clearError() { errorDiv.style.display = 'none'; }
+    function escapeHtml(s) {
+      return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    async function loadTemplates() {
+      try {
+        const res = await fetch('/api/templates');
+        const data = await res.json();
+        templates = data.templates || [];
+        templateSelect.innerHTML = '';
+        templates.forEach(t => {
+          const o = document.createElement('option');
+          o.value = t.id; o.textContent = t.name;
+          templateSelect.appendChild(o);
+        });
+        if (templates.some(t => t.id === 'default-hindi-comfy')) {
+          templateSelect.value = 'default-hindi-comfy';
+        }
+      } catch (e) { showError('Failed to load templates: ' + e.message); }
+    }
+
+    function summarize() {
+      const counts = { pending: 0, generating: 0, generated: 0, failed: 0 };
+      stories.forEach(s => { counts[s.status] = (counts[s.status] || 0) + 1; });
+      summaryEl.innerHTML = ['pending','generating','generated','failed']
+        .map(k => `<span><span class="dot ${k}"></span>${counts[k]||0} ${k}</span>`).join('')
+        + `<span style="margin-left:1rem;color:#9ca3af">total ${stories.length}</span>`;
+    }
+
+    function progressPct(s) {
+      const p = s.progress;
+      if (!p) return 0;
+      if (p.step === 'images' && p.total) return Math.round((p.completed / p.total) * 100);
+      return Math.round(((STEP_INDEX[p.step] || 0) / 8) * 100);
+    }
+
+    function render() {
+      summarize();
+      const view = stories.filter(s => filter === 'all' || s.status === filter);
+      if (view.length === 0) {
+        listEl.innerHTML = `<div class="empty">No stories in this view.</div>`;
+        return;
+      }
+      listEl.innerHTML = view.map((s, i) => {
+        const pct = progressPct(s);
+        const prog = s.status === 'generating' && s.progress
+          ? `<div class="progressbar"><div style="width:${pct}%"></div></div>
+             <div class="meta">${escapeHtml(s.progress.label || '')} ${pct}%</div>`
+          : (s.error ? `<div class="meta" style="color:#dc2626">${escapeHtml(s.error)}</div>` : '');
+
+        let actions = '';
+        if (s.status === 'pending') {
+          actions = `<button class="btn primary" data-action="start" data-id="${s.id}">Generate</button>`;
+        } else if (s.status === 'generating') {
+          actions = `<button class="btn ghost" disabled>Running…</button>`;
+        } else if (s.status === 'generated') {
+          actions = `<a class="btn ok" href="/story.html?projectId=${encodeURIComponent(s.projectId)}" target="_blank">Open</a>
+                     <button class="btn ghost" data-action="reset" data-id="${s.id}">Reset</button>`;
+        } else if (s.status === 'failed') {
+          actions = `<button class="btn primary" data-action="start" data-id="${s.id}">Retry</button>
+                     <button class="btn ghost" data-action="reset" data-id="${s.id}">Reset</button>`;
+        }
+        return `
+          <div class="row">
+            <div class="idx">${i + 1}</div>
+            <div class="info">
+              <div class="title">${escapeHtml(s.title)}</div>
+              <div class="about">${escapeHtml(s.about)}</div>
+              ${prog}
+            </div>
+            <span class="status ${s.status}">${s.status}</span>
+            <div class="actions">${actions}</div>
+          </div>`;
+      }).join('');
+    }
+
+    async function refresh() {
+      try {
+        const res = await fetch('/api/stories');
+        const data = await res.json();
+        if (data.success) { stories = data.stories; render(); }
+      } catch (e) { console.error(e); }
+      schedulePoll();
+    }
+
+    function schedulePoll() {
+      clearTimeout(pollTimer);
+      const anyGenerating = stories.some(s => s.status === 'generating');
+      pollTimer = setTimeout(refresh, anyGenerating ? 3000 : 15000);
+    }
+
+    async function start(id) {
+      clearError();
+      try {
+        const res = await fetch(`/api/stories/${encodeURIComponent(id)}/start`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ templateId: templateSelect.value }),
+        });
+        const data = await res.json();
+        if (!data.success) showError(data.error || 'Failed to start');
+        else refresh();
+      } catch (e) { showError(e.message); }
+    }
+
+    async function reset(id) {
+      try {
+        await fetch(`/api/stories/${encodeURIComponent(id)}/reset`, { method: 'POST' });
+        refresh();
+      } catch (e) { showError(e.message); }
+    }
+
+    listEl.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-action]');
+      if (!btn) return;
+      const id = btn.getAttribute('data-id');
+      if (btn.dataset.action === 'start') start(id);
+      else if (btn.dataset.action === 'reset') reset(id);
+    });
+
+    startAllBtn.addEventListener('click', async () => {
+      const pending = stories.filter(s => s.status === 'pending');
+      for (const s of pending) {
+        await start(s.id);
+        await new Promise(r => setTimeout(r, 800));
+      }
+    });
+
+    filtersEl.addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-filter]');
+      if (!b) return;
+      filter = b.dataset.filter;
+      [...filtersEl.children].forEach(x => x.classList.toggle('active', x === b));
+      render();
+    });
+
+    (async () => {
+      await loadTemplates();
+      await refresh();
+    })();
+  </script>
+</body>
+</html>

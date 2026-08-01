@@ -1,0 +1,438 @@
+{
+  "id": "cfee9de1-59af-4ed8-a461-1fb4ecf8765c",
+  "revision": 0,
+  "last_node_id": 10,
+  "last_link_id": 12,
+  "nodes": [
+    {
+      "id": 5,
+      "type": "VAEDecode",
+      "pos": [
+        -734.9021375875067,
+        824.7701259653937
+      ],
+      "size": [
+        140,
+        46
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "samples",
+          "type": "LATENT",
+          "link": 8
+        },
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": 10
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            9
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.29.0",
+        "Node name for S&R": "VAEDecode"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 1,
+      "type": "TextEncodeMageFlowEdit",
+      "pos": [
+        -1534.3916296481336,
+        590.9749808459259
+      ],
+      "size": [
+        400,
+        254
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 2
+        },
+        {
+          "label": "image_1",
+          "name": "images.image_1",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": null
+        },
+        {
+          "name": "vae",
+          "shape": 7,
+          "type": "VAE",
+          "link": 3
+        }
+      ],
+      "outputs": [
+        {
+          "name": "positive",
+          "type": "CONDITIONING",
+          "links": [
+            5
+          ]
+        },
+        {
+          "name": "negative",
+          "type": "CONDITIONING",
+          "links": [
+            6
+          ]
+        },
+        {
+          "name": "latent",
+          "type": "LATENT",
+          "links": []
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.29.0",
+        "Node name for S&R": "TextEncodeMageFlowEdit"
+      },
+      "widgets_values": [
+        "Generate image 3: a group of forest animals: a gentle deer, a nervous monkey, a huge elephant, a colorful peacock, and a tiny squirrel, all with worried eyes and trembling postures, standing close together gathered together in a forest clearing under a giant banyan tree, with a flat mossy stone in the middle, surrounded by tree roots and green grass, soft morning light, talking seriously with worried faces, bright Indian children's book illustration style, portrait 9:16 format, no text in image, warm sunlight, rounded shapes, cheerful vibrant palette, safe for ages 3-7",
+        "",
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "id": 3,
+      "type": "KSampler",
+      "pos": [
+        -834.9301098579109,
+        464.87404538071894
+      ],
+      "size": [
+        270,
+        262
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 11
+        },
+        {
+          "name": "positive",
+          "type": "CONDITIONING",
+          "link": 5
+        },
+        {
+          "name": "negative",
+          "type": "CONDITIONING",
+          "link": 6
+        },
+        {
+          "name": "latent_image",
+          "type": "LATENT",
+          "link": 12
+        }
+      ],
+      "outputs": [
+        {
+          "name": "LATENT",
+          "type": "LATENT",
+          "links": [
+            8
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.29.0",
+        "Node name for S&R": "KSampler"
+      },
+      "widgets_values": [
+        38012638478053,
+        "randomize",
+        4,
+        1.5,
+        "euler",
+        "simple",
+        1
+      ]
+    },
+    {
+      "id": 8,
+      "type": "PreviewImage",
+      "pos": [
+        -404.2333093620037,
+        204.52852359701225
+      ],
+      "size": [
+        664.8654999743151,
+        693.1868312747897
+      ],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 9
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": null
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.29.0",
+        "Node name for S&R": "PreviewImage"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 9,
+      "type": "UNETLoader",
+      "pos": [
+        -2055.4059769875603,
+        444.61091335269134
+      ],
+      "size": [
+        270,
+        82
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            11
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.29.0",
+        "Node name for S&R": "UNETLoader"
+      },
+      "widgets_values": [
+        "diffusion_models/mage_flow_turbo_int8_convrot.safetensors",
+        "default"
+      ]
+    },
+    {
+      "id": 4,
+      "type": "CLIPLoader",
+      "pos": [
+        -2066.04068244521,
+        647.7957890199915
+      ],
+      "size": [
+        270,
+        106
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "CLIP",
+          "type": "CLIP",
+          "links": [
+            2
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.29.0",
+        "Node name for S&R": "CLIPLoader"
+      },
+      "widgets_values": [
+        "qwen3vl_4b_bf16.safetensors",
+        "stable_diffusion",
+        "default"
+      ]
+    },
+    {
+      "id": 7,
+      "type": "VAELoader",
+      "pos": [
+        -2099.6608002575135,
+        798.5709743037773
+      ],
+      "size": [
+        270,
+        58
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "VAE",
+          "type": "VAE",
+          "links": [
+            3,
+            10
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.29.0",
+        "Node name for S&R": "VAELoader"
+      },
+      "widgets_values": [
+        "mage_flow_vae_bf16.safetensors"
+      ]
+    },
+    {
+      "id": 10,
+      "type": "EmptyLatentImage",
+      "pos": [
+        -1848.122989222738,
+        969.85025460488
+      ],
+      "size": [
+        270,
+        106
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "LATENT",
+          "type": "LATENT",
+          "links": [
+            12
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.29.0",
+        "Node name for S&R": "EmptyLatentImage"
+      },
+      "widgets_values": [
+        544,
+        1080,
+        1
+      ]
+    }
+  ],
+  "links": [
+    [
+      2,
+      4,
+      0,
+      1,
+      0,
+      "CLIP"
+    ],
+    [
+      3,
+      7,
+      0,
+      1,
+      2,
+      "VAE"
+    ],
+    [
+      5,
+      1,
+      0,
+      3,
+      1,
+      "CONDITIONING"
+    ],
+    [
+      6,
+      1,
+      1,
+      3,
+      2,
+      "CONDITIONING"
+    ],
+    [
+      8,
+      3,
+      0,
+      5,
+      0,
+      "LATENT"
+    ],
+    [
+      9,
+      5,
+      0,
+      8,
+      0,
+      "IMAGE"
+    ],
+    [
+      10,
+      7,
+      0,
+      5,
+      1,
+      "VAE"
+    ],
+    [
+      11,
+      9,
+      0,
+      3,
+      0,
+      "MODEL"
+    ],
+    [
+      12,
+      10,
+      0,
+      3,
+      3,
+      "LATENT"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 0.6958099009901009,
+      "offset": [
+        2461.0409026006355,
+        125.8137501203283
+      ]
+    },
+    "frontendVersion": "1.47.11"
+  },
+  "version": 0.4
+}

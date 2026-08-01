@@ -176,12 +176,1187 @@ async function getProjectDir(projectId) {
   return dir;
 }
 
+function loadTemplates() {
+  try {
+    const raw = fs.readFileSync(
+      path.join(__dirname, "data", "templates.json"),
+      "utf8",
+    );
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+const STORIES_FILE = path.join(__dirname, "data", "stories.json");
+let storiesStore = [];
+const storyProgress = {};
+
+function slugify(s) {
+  return String(s || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+}
+
+function ensureStoryFields(stories) {
+  const usedIds = new Set();
+  for (const s of stories) {
+    if (!s.id) {
+      let base = slugify(s.title) || `story-${Date.now()}`;
+      let id = base;
+      let n = 2;
+      while (usedIds.has(id)) id = `${base}-${n++}`;
+      s.id = id;
+    }
+    usedIds.add(s.id);
+    if (!s.status) s.status = "pending";
+    if (!s.title) s.title = s.id;
+  }
+  return stories;
+}
+
+function loadStories() {
+  try {
+    const raw = fs.readFileSync(STORIES_FILE, "utf8");
+    const parsed = JSON.parse(raw);
+    storiesStore = Array.isArray(parsed) ? parsed : [];
+  } catch {
+    storiesStore = [];
+  }
+  ensureStoryFields(storiesStore);
+  for (const s of storiesStore) {
+    if (s.status === "generating") {
+      s.status = "failed";
+      s.error = "Interrupted (server restarted)";
+    }
+  }
+  saveStories();
+}
+
+function saveStories() {
+  try {
+    fs.writeFileSync(STORIES_FILE, JSON.stringify(storiesStore, null, 2));
+  } catch (err) {
+    console.error("Failed to persist stories:", err.message);
+  }
+}
+
+function getStory(id) {
+  return storiesStore.find((s) => s.id === id) || null;
+}
+
+function updateStory(id, patch) {
+  const s = getStory(id);
+  if (!s) return null;
+  Object.assign(s, patch);
+  saveStories();
+  return s;
+}
+
+function storyPublic(s) {
+  if (!s) return null;
+  const { title, about, id, status, templateId, projectId, error } = s;
+  const out = { title, about, id, status, templateId, projectId, error };
+  if (s.startedAt) out.startedAt = s.startedAt;
+  if (s.completedAt) out.completedAt = s.completedAt;
+  if (s.videoUrl) out.videoUrl = s.videoUrl;
+  if (s.currentStep) out.currentStep = s.currentStep;
+  const live = storyProgress[id];
+  if (live) out.progress = live;
+  return out;
+}
+
+loadStories();
+
+const SCHEDULE_FILE = path.join(__dirname, "data", "schedule.json");
+const SLOTS = [
+  { key: "morning", hour: 8, minute: 0, label: "8:00 AM" },
+  { key: "evening", hour: 19, minute: 0, label: "7:00 PM" },
+];
+let scheduleStore = {};
+
+function formatDateYMD(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function parseYMD(ymd) {
+  const [y, m, d] = String(ymd).split("-").map(Number);
+  return new Date(y, m - 1, d);
+}
+
+function makeSlotId(date, slotKey) {
+  const ymd = date instanceof Date ? formatDateYMD(date) : date;
+  return `${ymd}-${slotKey}`;
+}
+
+function slotDetail(slotId) {
+  const m = String(slotId).match(/^(\d{4}-\d{2}-\d{2})-(morning|evening)$/);
+  if (!m) return null;
+  const slot = SLOTS.find((s) => s.key === m[2]);
+  return slot ? { ymd: m[1], key: m[2], slot } : null;
+}
+
+function loadSchedule() {
+  try {
+    const raw = fs.readFileSync(SCHEDULE_FILE, "utf8");
+    const parsed = JSON.parse(raw);
+    scheduleStore =
+      parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? parsed
+        : {};
+  } catch {
+    scheduleStore = {};
+  }
+}
+
+function saveSchedule() {
+  try {
+    fs.writeFileSync(SCHEDULE_FILE, JSON.stringify(scheduleStore, null, 2));
+  } catch (err) {
+    console.error("Failed to persist schedule:", err.message);
+  }
+}
+
+function isSlotBooked(slotId) {
+  return !!scheduleStore[slotId];
+}
+
+function getSlotPublic(slotId) {
+  return scheduleStore[slotId] || null;
+}
+
+function getNextAvailableSlots(count = 1, from = new Date()) {
+  const result = [];
+  const day = new Date(from.getFullYear(), from.getMonth(), from.getDate());
+  let guard = 0;
+  while (result.length < count && guard < 400) {
+    for (const slot of SLOTS) {
+      const slotTime = new Date(
+        day.getFullYear(),
+        day.getMonth(),
+        day.getDate(),
+        slot.hour,
+        slot.minute,
+      );
+      if (slotTime.getTime() <= from.getTime()) continue;
+      const slotId = makeSlotId(day, slot.key);
+      if (isSlotBooked(slotId)) continue;
+      result.push({
+        slotId,
+        date: formatDateYMD(day),
+        slotKey: slot.key,
+        label: slot.label,
+        hour: slot.hour,
+        minute: slot.minute,
+        at: slotTime.toISOString(),
+      });
+      if (result.length >= count) break;
+    }
+    day.setDate(day.getDate() + 1);
+    guard++;
+  }
+  return result;
+}
+
+function bookSlot(slotId, info = {}) {
+  const detail = slotDetail(slotId);
+  if (!detail) return { error: "Invalid slotId" };
+  if (isSlotBooked(slotId))
+    return { error: "Slot already booked", slot: getSlotPublic(slotId) };
+  const entry = {
+    slotId,
+    date: detail.ymd,
+    slotKey: detail.key,
+    label: detail.slot.label,
+    platform: info.platform || "youtube",
+    projectId: info.projectId || null,
+    storyId: info.storyId || null,
+    title: info.title || null,
+    bookedAt: new Date().toISOString(),
+    status: "scheduled",
+  };
+  scheduleStore[slotId] = entry;
+  saveSchedule();
+  return { slot: entry };
+}
+
+function releaseSlot(slotId) {
+  if (!scheduleStore[slotId]) return { error: "Slot not booked" };
+  delete scheduleStore[slotId];
+  saveSchedule();
+  return { success: true };
+}
+
+// Active YouTube posting jobs keyed by slotId
+const ytPostJobs = {};
+
+// Bridge to bot/ytPost.js — spawns it as a detached background process with
+// <projectId> and the slot's scheduled datetime. The script itself is owned by
+// someone else; we only link to it and track its exit status here.
+function triggerYtPost(projectId, slotId, slotAtIso) {
+  const scriptPath = path.join(__dirname, "bot", "ytPost.js");
+  const logDir = path.join(STORAGE_ROOT, "logs");
+  fs.mkdirSync(logDir, { recursive: true });
+  const logFile = path.join(logDir, `yt-${projectId}-${slotId}.log`);
+
+  const args = [scriptPath, projectId, slotAtIso];
+  const child = spawn(process.execPath, args, {
+    cwd: __dirname,
+    detached: true,
+    stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, PROJECTS_ROOT: path.join(STORAGE_ROOT, "projects") },
+  });
+
+  const logStream = fs.createWriteStream(logFile, { flags: "w" });
+  child.stdout.pipe(logStream);
+  child.stderr.pipe(logStream);
+
+  ytPostJobs[slotId] = { pid: child.pid, projectId, startedAt: Date.now(), logFile };
+
+  if (scheduleStore[slotId]) {
+    scheduleStore[slotId].status = "posting";
+    scheduleStore[slotId].logFile = logFile;
+    saveSchedule();
+  }
+
+  child.on("close", (code) => {
+    const job = ytPostJobs[slotId];
+    if (scheduleStore[slotId]) {
+      scheduleStore[slotId].status = code === 0 ? "posted" : "failed";
+      scheduleStore[slotId].finishedAt = new Date().toISOString();
+      scheduleStore[slotId].exitCode = code;
+      saveSchedule();
+    }
+    delete ytPostJobs[slotId];
+    console.log(
+      `[ytPost] ${projectId} slot ${slotId} exited code=${code}${job ? ` (log: ${logFile})` : ""}`,
+    );
+  });
+  child.on("error", (err) => {
+    if (scheduleStore[slotId]) {
+      scheduleStore[slotId].status = "failed";
+      scheduleStore[slotId].error = err.message;
+      saveSchedule();
+    }
+    delete ytPostJobs[slotId];
+    console.error(`[ytPost] failed to spawn for ${projectId}/${slotId}:`, err.message);
+  });
+
+  child.unref();
+  return { pid: child.pid, logFile };
+}
+
+function getSlotsForRange(fromDate, days) {
+  const out = [];
+  const day = new Date(fromDate.getFullYear(), fromDate.getMonth(), fromDate.getDate());
+  for (let i = 0; i < days; i++) {
+    for (const slot of SLOTS) {
+      const slotId = makeSlotId(day, slot.key);
+      const slotTime = new Date(
+        day.getFullYear(),
+        day.getMonth(),
+        day.getDate(),
+        slot.hour,
+        slot.minute,
+      );
+      const booked = isSlotBooked(slotId);
+      out.push({
+        slotId,
+        date: formatDateYMD(day),
+        slotKey: slot.key,
+        label: slot.label,
+        hour: slot.hour,
+        minute: slot.minute,
+        at: slotTime.toISOString(),
+        past: slotTime.getTime() < Date.now(),
+        booked,
+        booking: booked ? getSlotPublic(slotId) : null,
+      });
+    }
+    day.setDate(day.getDate() + 1);
+  }
+  return out;
+}
+
+loadSchedule();
+
+async function generateStoryText({ input, model, ssml }) {
+  const selectedModel = model || DEFAULT_MODEL;
+  if (!selectedModel) throw new Error("No model selected");
+  const systemPrompt = ssml ? SYSTEM_PROMPT_SSML : SYSTEM_PROMPT_NO_SSML;
+  const result = await generateText({
+    model: openrouter.chat(selectedModel),
+    system: systemPrompt,
+    prompt: input,
+  });
+  return result.text.trim();
+}
+
+function buildWavHeader(pcmLength, sampleRate = 24000, channels = 1, bitsPerSample = 16) {
+  const byteRate = sampleRate * channels * (bitsPerSample / 8);
+  const blockAlign = channels * (bitsPerSample / 8);
+  const header = Buffer.alloc(44);
+  header.write("RIFF", 0);
+  header.writeUInt32LE(36 + pcmLength, 4);
+  header.write("WAVE", 8);
+  header.write("fmt ", 12);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(channels, 22);
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(byteRate, 28);
+  header.writeUInt16LE(blockAlign, 32);
+  header.writeUInt16LE(bitsPerSample, 34);
+  header.write("data", 36);
+  header.writeUInt32LE(pcmLength, 40);
+  return header;
+}
+
+async function generateTtsAudio({ text, provider, voice, speaker, language }) {
+  if (!text) throw new Error("Text is required");
+
+  if (provider === "openrouter") {
+    const orKey = process.env.OPENROUTER_TTS_API_KEY || process.env.OPENROUTER_API_KEY;
+    if (!orKey) throw new Error("OPENROUTER_TTS_API_KEY not configured");
+
+    const postData = JSON.stringify({
+      model: "google/gemini-3.1-flash-tts-preview",
+      input: text,
+      voice: voice || "zephyr",
+    });
+
+    const audioBase64 = await new Promise((resolve, reject) => {
+      const req = https.request(
+        {
+          hostname: "openrouter.ai",
+          path: "/api/v1/audio/speech",
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${orKey}`,
+            "Content-Type": "application/json",
+            "Content-Length": Buffer.byteLength(postData),
+          },
+        },
+        (response) => {
+          const chunks = [];
+          response.on("data", (chunk) => chunks.push(chunk));
+          response.on("end", () => {
+            if (response.statusCode !== 200) {
+              const errBody = Buffer.concat(chunks).toString();
+              return reject(
+                new Error(
+                  `OpenRouter TTS error (${response.statusCode}): ${errBody}`,
+                ),
+              );
+            }
+            const pcm = Buffer.concat(chunks);
+            const wav = Buffer.concat([buildWavHeader(pcm.length), pcm]);
+            resolve(wav.toString("base64"));
+          });
+        },
+      );
+      req.on("error", reject);
+      req.write(postData);
+      req.end();
+    });
+
+    return { audio: audioBase64, format: "wav" };
+  }
+
+  if (!sarvamClient) {
+    throw new Error("SARVAM_API_KEY not configured");
+  }
+
+  const response = await sarvamClient.textToSpeech.convert({
+    text,
+    target_language_code: language || "hi-IN",
+    speaker: speaker || "shubh",
+    model: "bulbul:v3",
+    speech_sample_rate: 24000,
+    audio_format: "wav",
+  });
+
+  return {
+    audio: response?.audios?.[0] || null,
+    format: "wav",
+    request_id: response?.request_id,
+  };
+}
+
+async function generateSubtitleSrt({ audio, provider }) {
+  if (!audio) throw new Error("Audio is required");
+
+  if (provider === "colab") {
+    if (!COLAB_WHISPER_URL) throw new Error("COLAB_WHISPER_URL not configured");
+
+    const response = await fetch(`${COLAB_WHISPER_URL}/transcribe`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "ngrok-skip-browser-warning": "1",
+      },
+      body: JSON.stringify({
+        base64_data: `data:audio/wav;base64,${audio}`,
+      }),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`Colab whisper: ${response.status} ${errText}`);
+    }
+
+    const data = await response.json();
+    if (data.status !== "success" || !data.transcription?.segments) {
+      throw new Error("Colab whisper: unexpected response");
+    }
+
+    return segmentsToSrt(data.transcription.segments);
+  }
+
+  if (!process.env.OPENAI_API_KEY) {
+    throw new Error("OPENAI_API_KEY not configured");
+  }
+
+  const tempDir = path.join(__dirname, "temp");
+  await fsPromises.mkdir(tempDir, { recursive: true });
+  const tempFile = path.join(tempDir, `audio_${Date.now()}.wav`);
+  await fsPromises.writeFile(tempFile, audio, "base64");
+
+  const transcription = await openai.audio.transcriptions.create({
+    file: fs.createReadStream(tempFile),
+    model: "whisper-1",
+    language: "hi",
+    response_format: "vtt",
+  });
+
+  await fsPromises.unlink(tempFile);
+
+  return vttToSrt(transcription);
+}
+
+async function generateImagePromptsList({ subtitle }) {
+  if (!subtitle) throw new Error("Subtitle (SRT) is required");
+
+  const selectedModel = DEFAULT_MODEL;
+  if (!selectedModel) throw new Error("No model selected");
+
+  const result = await generateText({
+    model: openrouter.chat(selectedModel),
+    system: SYSTEM_PROMPT_IMAGE,
+    prompt: subtitle,
+  });
+
+  let responseText = result.text.trim();
+  let finalPrompts;
+  let entities = null;
+
+  try {
+    const parsed = JSON.parse(responseText);
+
+    if (parsed.entities && parsed.prompts) {
+      entities = parsed.entities;
+      finalPrompts = parsed.prompts.map((prompt) => {
+        let resolved = prompt;
+        for (const [placeholder, value] of Object.entries(parsed.entities)) {
+          const escapedPlaceholder = placeholder.replace(
+            /[.*+?^${}()|[\]\\]/g,
+            "\\$&",
+          );
+          resolved = resolved.replace(
+            new RegExp(escapedPlaceholder, "g"),
+            value,
+          );
+        }
+        return resolved;
+      });
+    } else if (Array.isArray(parsed)) {
+      finalPrompts = parsed;
+    } else {
+      throw new Error("Unexpected format");
+    }
+  } catch (parseError) {
+    const arrayMatch = responseText.match(/\[[\s\S]*\]/);
+    if (arrayMatch) {
+      finalPrompts = JSON.parse(arrayMatch[0]);
+    } else {
+      throw new Error("Could not parse image prompts response");
+    }
+  }
+
+  return { prompts: JSON.stringify(finalPrompts), entities };
+}
+
+async function generateYtMetadataText({ story, subtitle }) {
+  if (!story && !subtitle) {
+    throw new Error("Story or subtitle is required");
+  }
+
+  const selectedModel = DEFAULT_MODEL;
+  if (!selectedModel) throw new Error("No model selected");
+
+  const input = story || subtitle;
+  const result = await generateText({
+    model: openrouter.chat(selectedModel),
+    system: SYSTEM_PROMPT_YT,
+    prompt: input,
+  });
+
+  return result.text.trim();
+}
+
+async function parseImagePromptsFile(projectDir) {
+  const promptsPath = path.join(projectDir, "image-prompts.json");
+  const promptsContent = await fsPromises.readFile(promptsPath, "utf8");
+  try {
+    return JSON.parse(promptsContent);
+  } catch {
+    const match = promptsContent.match(/\[[\s\S]*\]/);
+    if (match) return JSON.parse(match[0]);
+    throw new Error("Invalid prompts format");
+  }
+}
+
+async function getImagesStartIndex(imageDir) {
+  await fsPromises.mkdir(imageDir, { recursive: true });
+  const existingFiles = await fsPromises.readdir(imageDir);
+  return existingFiles.filter((f) => f.endsWith(".png")).length;
+}
+
+async function generateImagesRunpodInternal(projectId, onProgress) {
+  if (!RUNPOD_API_KEY) throw new Error("RUNPOD_API_KEY not configured");
+
+  const projectDir = await getProjectDir(projectId);
+  const imageDir = path.join(projectDir, "images");
+  await fsPromises.mkdir(imageDir, { recursive: true });
+
+  const prompts = await parseImagePromptsFile(projectDir);
+  const startIndex = await getImagesStartIndex(imageDir);
+  const totalCount = prompts.length;
+
+  if (startIndex >= totalCount) {
+    onProgress?.({ completed: totalCount, total: totalCount });
+    return { completed: totalCount, total: totalCount };
+  }
+
+  for (let i = startIndex; i < totalCount; i++) {
+    onProgress?.({ completed: i, total: totalCount });
+    const prompt = prompts[i];
+    try {
+      const response = await fetch(`${RUNPOD_ENDPOINT}/runsync`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${RUNPOD_API_KEY}`,
+        },
+        body: JSON.stringify({
+          input: { prompt, width: 512, height: 922 },
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`RunPod API error: ${response.status} - ${errorText}`);
+      }
+
+      const data = await response.json();
+      if (data.output?.images?.[0]?.base64) {
+        await fsPromises.writeFile(
+          path.join(imageDir, `${i + 1}.png`),
+          data.output.images[0].base64,
+          "base64",
+        );
+      } else {
+        throw new Error("No image in response");
+      }
+    } catch (err) {
+      err.completed = i;
+      err.total = totalCount;
+      throw err;
+    }
+  }
+
+  onProgress?.({ completed: totalCount, total: totalCount });
+  return { completed: totalCount, total: totalCount };
+}
+
+const DEFAULT_NEGATIVE_PROMPT =
+  "lowres, low quality, worst quality, blurry, deformed, distorted, bad anatomy, wrong anatomy, extra fingers, missing fingers, mutated hands, poorly drawn hands, poorly drawn face, extra limbs, missing limbs, cloned face, disfigured, malformed, mutation, bad proportions, watermark, text, signature, logo, caption, jpeg artifacts, ugly, duplicate, glitch, error, nsfw, scary, violent, gloomy";
+
+function resolveWorkflowPath(workflowOverride) {
+  if (!workflowOverride) return COMFY_WORKFLOW;
+  return path.isAbsolute(workflowOverride)
+    ? workflowOverride
+    : path.join(__dirname, "comfy-workflows", workflowOverride);
+}
+
+async function generateImagesComfyInternal(projectId, options = {}, onProgress) {
+  const { workflow: workflowOverride, negativePrompt } = options;
+
+  if (!COMFY_URL) throw new Error("COMFY_URL not configured");
+  const client = await getComfyClient();
+  if (!client) throw new Error("ComfyUI client not available");
+
+  try {
+    await fetch(`${COMFY_URL}/queue`);
+  } catch (connErr) {
+    console.error("ComfyUI connection test failed:", connErr.message);
+  }
+
+  const projectDir = await getProjectDir(projectId);
+  const imageDir = path.join(projectDir, "images");
+  await fsPromises.mkdir(imageDir, { recursive: true });
+
+  const prompts = await parseImagePromptsFile(projectDir);
+  const startIndex = await getImagesStartIndex(imageDir);
+  const totalCount = prompts.length;
+
+  if (startIndex >= totalCount) {
+    onProgress?.({ completed: totalCount, total: totalCount });
+    return { completed: totalCount, total: totalCount };
+  }
+
+  const workflowPath = resolveWorkflowPath(workflowOverride);
+  const inputs = {
+    prompt: "",
+    height: 922,
+    width: 512,
+  };
+  if (negativePrompt !== undefined && negativePrompt !== null) {
+    inputs.negative_prompt = negativePrompt;
+  }
+
+  for (let i = startIndex; i < totalCount; i++) {
+    onProgress?.({ completed: i, total: totalCount });
+    const prompt = prompts[i];
+    try {
+      inputs.prompt = prompt;
+      const result = await client.generateImage({
+        workflow: workflowPath,
+        inputs,
+        output: { type: "base64" },
+      });
+
+      if (result.images?.[0]?.base64) {
+        const base64Data = result.images[0].base64.split(",")[1];
+        await fsPromises.writeFile(
+          path.join(imageDir, `${i + 1}.png`),
+          base64Data,
+          "base64",
+        );
+        console.log(`Image ${i + 1} saved via ComfyUI`);
+      } else {
+        throw new Error("No image in ComfyUI response");
+      }
+    } catch (err) {
+      err.completed = i;
+      err.total = totalCount;
+      throw err;
+    }
+  }
+
+  onProgress?.({ completed: totalCount, total: totalCount });
+  return { completed: totalCount, total: totalCount };
+}
+
+async function renderVideoForProject(projectId, renderer, onProgress) {
+  if (!["ffmpeg", "remotion"].includes(renderer)) {
+    throw new Error("Invalid video renderer");
+  }
+
+  const projectDir = await getProjectDir(projectId);
+  const audioPath = path.join(projectDir, "audio.wav");
+  const srtPath = path.join(projectDir, "subtitle.srt");
+  const imageDir = path.join(projectDir, "images");
+
+  if (!fs.existsSync(audioPath)) throw new Error("Audio not found");
+  if (!fs.existsSync(srtPath)) throw new Error("Subtitle not found");
+  if (!fs.existsSync(imageDir)) throw new Error("Images not found");
+
+  const images = fs.readdirSync(imageDir).filter((f) => f.endsWith(".png"));
+  if (images.length === 0) throw new Error("No images found");
+
+  const renderVideo =
+    renderer === "remotion" ? createStoryVideoRemotion : createStoryVideoFfmpeg;
+  return renderVideo(projectId, onProgress);
+}
+
+async function runOneShotPipeline({ projectId, input, template, onProgress }) {
+  const cfg = template.config || {};
+  const projectDir = await getProjectDir(projectId);
+
+  await fsPromises.writeFile(path.join(projectDir, "input.txt"), input || "");
+  onProgress({ step: "input", label: "Input saved", status: "done" });
+
+  const story = await generateStoryText({
+    input,
+    model: cfg.model || null,
+    ssml: cfg.ssml !== false,
+  });
+  await fsPromises.writeFile(path.join(projectDir, "story.txt"), story);
+  onProgress({ step: "story", label: "Story generated", status: "done" });
+
+  const ttsCfg = cfg.tts || {};
+  const tts = await generateTtsAudio({
+    text: story,
+    provider: ttsCfg.provider || "openrouter",
+    voice: ttsCfg.voice,
+    speaker: ttsCfg.speaker,
+    language: ttsCfg.language,
+  });
+  if (tts.audio) {
+    await fsPromises.writeFile(
+      path.join(projectDir, "audio.wav"),
+      tts.audio,
+      "base64",
+    );
+  }
+  onProgress({ step: "audio", label: "Audio generated", status: "done" });
+
+  const subCfg = cfg.subtitle || {};
+  const srt = await generateSubtitleSrt({
+    audio: tts.audio,
+    provider: subCfg.provider || "openai",
+  });
+  await fsPromises.writeFile(path.join(projectDir, "subtitle.srt"), srt);
+  onProgress({ step: "subtitle", label: "Subtitle generated", status: "done" });
+
+  const { prompts, entities } = await generateImagePromptsList({ subtitle: srt });
+  await fsPromises.writeFile(path.join(projectDir, "image-prompts.json"), prompts);
+  if (entities) {
+    await fsPromises.writeFile(
+      path.join(projectDir, "image-entities.json"),
+      JSON.stringify(entities, null, 2),
+    );
+  }
+  onProgress({
+    step: "imagePrompts",
+    label: "Image prompts generated",
+    status: "done",
+  });
+
+  const imgCfg = cfg.images || {};
+  const imgProvider = imgCfg.provider || "runpod";
+  const onImgProgress = (p) =>
+    onProgress({
+      step: "images",
+      label: `Generating images ${p.completed}/${p.total}`,
+      status: "running",
+      completed: p.completed,
+      total: p.total,
+    });
+
+  if (imgProvider === "runpod") {
+    await generateImagesRunpodInternal(projectId, onImgProgress);
+  } else if (imgProvider === "comfy") {
+    await generateImagesComfyInternal(
+      projectId,
+      {
+        workflow: imgCfg.workflow,
+        negativePrompt:
+          imgCfg.negativePrompt !== undefined
+            ? imgCfg.negativePrompt
+            : DEFAULT_NEGATIVE_PROMPT,
+      },
+      onImgProgress,
+    );
+  } else {
+    throw new Error(`Image provider '${imgProvider}' not supported in one-shot`);
+  }
+  onProgress({ step: "images", label: "Images generated", status: "done" });
+
+  const vidCfg = cfg.video || {};
+  const renderer = vidCfg.renderer || "remotion";
+  await renderVideoForProject(projectId, renderer, (p) =>
+    onProgress({
+      step: "video",
+      label: p.message || "Rendering video",
+      status: "running",
+    }),
+  );
+  onProgress({ step: "video", label: "Video rendered", status: "done" });
+
+  let ytMetadata = null;
+  if (cfg.ytSeo !== false) {
+    ytMetadata = await generateYtMetadataText({ story });
+    await fsPromises.writeFile(
+      path.join(projectDir, "yt-metadata.txt"),
+      ytMetadata,
+    );
+    onProgress({ step: "ytSeo", label: "YouTube SEO generated", status: "done" });
+  }
+
+  return {
+    projectId,
+    story,
+    ytMetadata,
+    videoUrl: `/api/project/${projectId}/video`,
+  };
+}
+
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 app.use(express.static(path.join(__dirname, "public")));
 
 app.get("/api/models", (req, res) => {
   res.json({ models: AVAILABLE_MODELS, default: DEFAULT_MODEL });
+});
+
+app.get("/api/templates", (req, res) => {
+  res.json({ success: true, templates: loadTemplates() });
+});
+
+app.post("/api/one-shot", async (req, res) => {
+  const { templateId, input, projectId: providedProjectId } = req.body;
+
+  const template = loadTemplates().find((t) => t.id === templateId);
+  if (!template) {
+    return res.status(400).json({ success: false, error: "Unknown template" });
+  }
+  if (!input || !input.trim()) {
+    return res
+      .status(400)
+      .json({ success: false, error: "Input story is required" });
+  }
+
+  const projectId = providedProjectId || `os-${Date.now()}`;
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders?.();
+
+  const send = (obj) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
+  const heartbeat = setInterval(() => res.write(`: ping\n\n`), 15000);
+
+  const onClose = () => {};
+  req.on("close", onClose);
+
+  try {
+    const result = await runOneShotPipeline({
+      projectId,
+      input,
+      template,
+      onProgress: (p) => send({ type: "progress", ...p }),
+    });
+    send({ type: "done", ...result });
+  } catch (error) {
+    console.error("One-shot pipeline error:", error);
+    send({ type: "error", message: error.message });
+  } finally {
+    clearInterval(heartbeat);
+    req.off("close", onClose);
+    res.end();
+  }
+});
+
+app.get("/api/stories", (req, res) => {
+  res.json({ success: true, stories: storiesStore.map(storyPublic) });
+});
+
+app.get("/api/stories/:id", (req, res) => {
+  const s = getStory(req.params.id);
+  if (!s) return res.status(404).json({ success: false, error: "Story not found" });
+  res.json({ success: true, story: storyPublic(s) });
+});
+
+app.post("/api/stories", (req, res) => {
+  const incoming = Array.isArray(req.body)
+    ? req.body
+    : Array.isArray(req.body?.stories)
+      ? req.body.stories
+      : [];
+  const existingIds = new Set(storiesStore.map((s) => s.id));
+  let added = 0;
+  for (const item of incoming) {
+    if (!item || !item.title) continue;
+    const id = slugify(item.title);
+    if (existingIds.has(id)) continue;
+    storiesStore.push({
+      id,
+      title: item.title,
+      about: item.about || "",
+      status: "pending",
+    });
+    existingIds.add(id);
+    added++;
+  }
+  saveStories();
+  res.json({ success: true, added, total: storiesStore.length });
+});
+
+app.post("/api/stories/:id/start", async (req, res) => {
+  const { templateId } = req.body || {};
+  const s = getStory(req.params.id);
+  if (!s) return res.status(404).json({ success: false, error: "Story not found" });
+
+  const template = loadTemplates().find((t) => t.id === templateId);
+  if (!template) {
+    return res.status(400).json({ success: false, error: "Unknown template" });
+  }
+  if (s.status === "generating") {
+    return res.status(409).json({ success: false, error: "Already generating" });
+  }
+
+  const projectId = `q-${s.id}-${Date.now()}`;
+  const input = s.about ? `${s.title}. ${s.about}` : s.title;
+
+  updateStory(s.id, {
+    status: "generating",
+    templateId,
+    projectId,
+    startedAt: Date.now(),
+    completedAt: null,
+    error: null,
+    videoUrl: null,
+    currentStep: "input",
+  });
+  storyProgress[s.id] = { step: "input", label: "Starting", completed: 0, total: 0 };
+
+  res.json({ success: true, projectId });
+
+  runOneShotPipeline({
+    projectId,
+    input,
+    template,
+    onProgress: (p) => {
+      if (!p || !p.step) return;
+      storyProgress[s.id] = {
+        step: p.step,
+        label: p.label || p.step,
+        completed: p.completed || 0,
+        total: p.total || 0,
+        updatedAt: Date.now(),
+      };
+    },
+  })
+    .then((result) => {
+      delete storyProgress[s.id];
+      updateStory(s.id, {
+        status: "generated",
+        completedAt: Date.now(),
+        videoUrl: result.videoUrl,
+        currentStep: "done",
+      });
+      console.log(`Queue story '${s.id}' generated -> ${projectId}`);
+    })
+    .catch((err) => {
+      delete storyProgress[s.id];
+      updateStory(s.id, {
+        status: "failed",
+        error: err.message,
+        completedAt: Date.now(),
+      });
+      console.error(`Queue story '${s.id}' failed:`, err.message);
+    });
+});
+
+app.post("/api/stories/:id/reset", (req, res) => {
+  const s = getStory(req.params.id);
+  if (!s) return res.status(404).json({ success: false, error: "Story not found" });
+  delete storyProgress[s.id];
+  updateStory(s.id, {
+    status: "pending",
+    error: null,
+    currentStep: null,
+    startedAt: null,
+    completedAt: null,
+  });
+  res.json({ success: true, story: storyPublic(s) });
+});
+
+app.delete("/api/stories/:id", (req, res) => {
+  const idx = storiesStore.findIndex((s) => s.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ success: false, error: "Story not found" });
+  const [removed] = storiesStore.splice(idx, 1);
+  delete storyProgress[removed.id];
+  saveStories();
+  res.json({ success: true });
+});
+
+async function readProjectMeta(projectId) {
+  const projectDir = path.join(STORAGE_ROOT, "projects", projectId);
+  const meta = {
+    projectId,
+    title: projectId,
+    preview: "",
+    hasInput: false,
+    hasStory: false,
+    hasAudio: false,
+    hasSubtitle: false,
+    hasImagePrompts: false,
+    hasImages: false,
+    hasVideo: false,
+    hasYtMetadata: false,
+    imageCount: 0,
+    createdAt: null,
+    updatedAt: null,
+    thumbnail: null,
+  };
+
+  const statSafe = async (p) => {
+    try {
+      return await fsPromises.stat(p);
+    } catch {
+      return null;
+    }
+  };
+
+  const dirStat = await statSafe(projectDir);
+  if (!dirStat) return meta;
+  meta.createdAt = dirStat.birthtimeMs || dirStat.ctimeMs || dirStat.mtimeMs;
+  meta.updatedAt = dirStat.mtimeMs;
+
+  const candidates = [
+    ["input.txt", "Input"],
+    ["story.txt", "Story"],
+    ["audio.wav", "Audio"],
+    ["subtitle.srt", "Subtitle"],
+    ["image-prompts.json", "ImagePrompts"],
+    ["yt-metadata.txt", "YtMetadata"],
+    ["video.mp4", "Video"],
+  ];
+
+  for (const [filename, key] of candidates) {
+    const filePath = path.join(projectDir, filename);
+    const st = await statSafe(filePath);
+    if (!st) continue;
+    meta[`has${key}`] = true;
+    if (st.mtimeMs > meta.updatedAt) meta.updatedAt = st.mtimeMs;
+
+    if (key === "Input" || key === "Story") {
+      try {
+        const content = await fsPromises.readFile(filePath, "utf8");
+        const trimmed = content.trim();
+        if (key === "Input" && trimmed) {
+          meta.preview = trimmed.slice(0, 200);
+        }
+        if (key === "Story" && trimmed) {
+          const firstLine =
+            trimmed.split("\n").find((l) => l.trim().length > 0) || "";
+          meta.title = firstLine.slice(0, 120);
+        }
+      } catch {}
+    }
+  }
+
+  // image-prompts count
+  try {
+    const promptsPath = path.join(projectDir, "image-prompts.json");
+    const content = await fsPromises.readFile(promptsPath, "utf8");
+    const parsed = JSON.parse(content);
+    if (Array.isArray(parsed)) meta.promptCount = parsed.length;
+  } catch {}
+
+  const imageDir = path.join(projectDir, "images");
+  const imgDirStat = await statSafe(imageDir);
+  if (imgDirStat && imgDirStat.isDirectory()) {
+    try {
+      const files = await fsPromises.readdir(imageDir);
+      const imgs = files
+        .filter((f) => /\.(png|jpg|jpeg|webp)$/i.test(f))
+        .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+      meta.imageCount = imgs.length;
+      meta.hasImages = imgs.length > 0;
+      if (imgs.length > 0) {
+        meta.thumbnail = `/api/project/${projectId}/images/${imgs[0]}`;
+      }
+    } catch {}
+  }
+
+  if (meta.hasVideo) {
+    meta.videoUrl = `/api/project/${projectId}/video`;
+  }
+
+  if (!meta.title || meta.title === projectId) {
+    if (meta.preview) meta.title = meta.preview.slice(0, 80);
+  }
+
+  return meta;
+}
+
+app.get("/api/projects", async (req, res) => {
+  try {
+    const projectsRoot = path.join(STORAGE_ROOT, "projects");
+    await fsPromises.mkdir(projectsRoot, { recursive: true });
+
+    let entries = [];
+    try {
+      entries = await fsPromises.readdir(projectsRoot, { withFileTypes: true });
+    } catch {}
+
+    const dirNames = entries
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name);
+
+    let projects = await Promise.all(dirNames.map(readProjectMeta));
+
+    const q = (req.query.q || "").toString().trim().toLowerCase();
+    if (q) {
+      projects = projects.filter(
+        (p) =>
+          p.projectId.toLowerCase().includes(q) ||
+          (p.title || "").toLowerCase().includes(q) ||
+          (p.preview || "").toLowerCase().includes(q),
+      );
+    }
+
+    const sort = (req.query.sort || "updated").toString();
+    const order = (req.query.order || "desc").toString() === "asc" ? 1 : -1;
+
+    projects.sort((a, b) => {
+      let av, bv;
+      switch (sort) {
+        case "name":
+          av = (a.projectId || "").toLowerCase();
+          bv = (b.projectId || "").toLowerCase();
+          return av < bv ? -order : av > bv ? order : 0;
+        case "created":
+          av = a.createdAt || 0;
+          bv = b.createdAt || 0;
+          return (av - bv) * order;
+        case "progress":
+          av = a.imageCount + (a.hasVideo ? 1 : 0) + (a.hasAudio ? 1 : 0);
+          bv = b.imageCount + (b.hasVideo ? 1 : 0) + (b.hasAudio ? 1 : 0);
+          return (av - bv) * order;
+        case "updated":
+        default:
+          av = a.updatedAt || 0;
+          bv = b.updatedAt || 0;
+          return (av - bv) * order;
+      }
+    });
+
+    const total = projects.length;
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.max(
+      1,
+      Math.min(100, parseInt(req.query.limit, 10) || 12),
+    );
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+    const start = (page - 1) * limit;
+    const items = projects.slice(start, start + limit);
+
+    res.json({
+      success: true,
+      total,
+      page,
+      limit,
+      totalPages,
+      sort,
+      order: order === 1 ? "asc" : "desc",
+      projects: items,
+    });
+  } catch (error) {
+    console.error("Error listing projects:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
 });
 
 app.get("/api/project/:projectId", async (req, res) => {
@@ -320,21 +1495,13 @@ app.post("/api/generate", async (req, res) => {
     return res.status(400).json({ success: false, error: "Story is required" });
   }
 
-  const selectedModel = model || DEFAULT_MODEL;
-  if (!selectedModel) {
-    return res.status(400).json({ success: false, error: "No model selected" });
-  }
-
-  const systemPrompt = ssml ? SYSTEM_PROMPT_SSML : SYSTEM_PROMPT_NO_SSML;
-
   try {
-    const result = await generateText({
-      model: openrouter.chat(selectedModel),
-      system: systemPrompt,
-      prompt: story,
+    const output = await generateStoryText({
+      input: story,
+      model,
+      ssml: !!ssml,
     });
-
-    res.json({ success: true, output: result.text.trim() });
+    res.json({ success: true, output });
   } catch (error) {
     console.error("Error generating story:", error);
     res.status(500).json({ success: false, error: error.message });
@@ -344,113 +1511,15 @@ app.post("/api/generate", async (req, res) => {
 app.post("/api/tts", async (req, res) => {
   const { text, speaker, language, provider, voice } = req.body;
 
-  if (!text) {
-    return res.status(400).json({ success: false, error: "Text is required" });
-  }
-
-  if (provider === "openrouter") {
-    const orKey = process.env.OPENROUTER_TTS_API_KEY || process.env.OPENROUTER_API_KEY;
-    if (!orKey) {
-      return res
-        .status(400)
-        .json({ success: false, error: "OPENROUTER_TTS_API_KEY not configured" });
-    }
-
-    try {
-      const postData = JSON.stringify({
-        model: "google/gemini-3.1-flash-tts-preview",
-        input: text,
-        voice: voice || "zephyr",
-      });
-
-      const audioBase64 = await new Promise((resolve, reject) => {
-        const req = https.request(
-          {
-            hostname: "openrouter.ai",
-            path: "/api/v1/audio/speech",
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${orKey}`,
-              "Content-Type": "application/json",
-              "Content-Length": Buffer.byteLength(postData),
-            },
-          },
-          (response) => {
-            const chunks = [];
-            response.on("data", (chunk) => chunks.push(chunk));
-            response.on("end", () => {
-              if (response.statusCode !== 200) {
-                const errBody = Buffer.concat(chunks).toString();
-                return reject(
-                  new Error(
-                    `OpenRouter TTS error (${response.statusCode}): ${errBody}`
-                  )
-                );
-              }
-              const pcm = Buffer.concat(chunks);
-              const sampleRate = 24000;
-              const channels = 1;
-              const bitsPerSample = 16;
-              const byteRate = sampleRate * channels * (bitsPerSample / 8);
-              const blockAlign = channels * (bitsPerSample / 8);
-              const wavHeader = Buffer.alloc(44);
-              wavHeader.write("RIFF", 0);
-              wavHeader.writeUInt32LE(36 + pcm.length, 4);
-              wavHeader.write("WAVE", 8);
-              wavHeader.write("fmt ", 12);
-              wavHeader.writeUInt32LE(16, 16);
-              wavHeader.writeUInt16LE(1, 20);
-              wavHeader.writeUInt16LE(channels, 22);
-              wavHeader.writeUInt32LE(sampleRate, 24);
-              wavHeader.writeUInt32LE(byteRate, 28);
-              wavHeader.writeUInt16LE(blockAlign, 32);
-              wavHeader.writeUInt16LE(bitsPerSample, 34);
-              wavHeader.write("data", 36);
-              wavHeader.writeUInt32LE(pcm.length, 40);
-              const wav = Buffer.concat([wavHeader, pcm]);
-              resolve(wav.toString("base64"));
-            });
-          }
-        );
-        req.on("error", reject);
-        req.write(postData);
-        req.end();
-      });
-
-      res.json({
-        success: true,
-        audio: audioBase64,
-        format: "wav",
-      });
-    } catch (error) {
-      console.error("Error generating OpenRouter TTS:", error);
-      res.status(500).json({ success: false, error: error.message });
-    }
-    return;
-  }
-
-  if (!sarvamClient) {
-    return res
-      .status(400)
-      .json({ success: false, error: "SARVAM_API_KEY not configured" });
-  }
-
   try {
-    const response = await sarvamClient.textToSpeech.convert({
+    const result = await generateTtsAudio({
       text,
-      target_language_code: language || "hi-IN",
-      speaker: speaker || "shubh",
-      model: "bulbul:v3",
-      speech_sample_rate: 24000,
-      audio_format: "wav",
+      provider,
+      voice,
+      speaker,
+      language,
     });
-
-    res.json({
-      success: true,
-      audio: response?.audios?.[0] || null,
-      format: "wav",
-      request_id: response?.request_id,
-    });
+    res.json({ success: true, ...result });
   } catch (error) {
     console.error("Error generating TTS:", error);
     res.status(500).json({ success: false, error: error.message });
@@ -489,77 +1558,9 @@ function segmentsToSrt(segments) {
 app.post("/api/subtitle", async (req, res) => {
   const { audio, provider } = req.body;
 
-  if (!audio) {
-    return res.status(400).json({ success: false, error: "Audio is required" });
-  }
-
   try {
-    if (provider === "colab") {
-      if (!COLAB_WHISPER_URL) {
-        return res
-          .status(400)
-          .json({ success: false, error: "COLAB_WHISPER_URL not configured" });
-      }
-
-      const response = await fetch(`${COLAB_WHISPER_URL}/transcribe`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "ngrok-skip-browser-warning": "1",
-        },
-        body: JSON.stringify({
-          base64_data: `data:audio/wav;base64,${audio}`,
-        }),
-      });
-
-      if (!response.ok) {
-        const errText = await response.text();
-        console.error("Colab whisper error:", errText);
-        return res
-          .status(500)
-          .json({ success: false, error: `Colab whisper: ${response.status}` });
-      }
-
-      const data = await response.json();
-
-      if (data.status !== "success" || !data.transcription?.segments) {
-        return res
-          .status(500)
-          .json({ success: false, error: "Colab whisper: unexpected response" });
-      }
-
-      const srt = segmentsToSrt(data.transcription.segments);
-
-      return res.json({ success: true, subtitle: srt });
-    }
-
-    if (!process.env.OPENAI_API_KEY) {
-      return res
-        .status(400)
-        .json({ success: false, error: "OPENAI_API_KEY not configured" });
-    }
-
-    const tempDir = path.join(__dirname, "temp");
-    await fsPromises.mkdir(tempDir, { recursive: true });
-    const tempFile = path.join(tempDir, `audio_${Date.now()}.wav`);
-
-    await fsPromises.writeFile(tempFile, audio, "base64");
-
-    const transcription = await openai.audio.transcriptions.create({
-      file: fs.createReadStream(tempFile),
-      model: "whisper-1",
-      language: "hi",
-      response_format: "vtt",
-    });
-
-    await fsPromises.unlink(tempFile);
-
-    const srt = vttToSrt(transcription);
-
-    res.json({
-      success: true,
-      subtitle: srt,
-    });
+    const subtitle = await generateSubtitleSrt({ audio, provider });
+    res.json({ success: true, subtitle });
   } catch (error) {
     console.error("Error generating subtitle:", error);
     res.status(500).json({ success: false, error: error.message });
@@ -569,60 +1570,8 @@ app.post("/api/subtitle", async (req, res) => {
 app.post("/api/image-prompts", async (req, res) => {
   const { subtitle, projectId } = req.body;
 
-  if (!subtitle) {
-    return res
-      .status(400)
-      .json({ success: false, error: "Subtitle (SRT) is required" });
-  }
-
-  const selectedModel = DEFAULT_MODEL;
-  if (!selectedModel) {
-    return res.status(400).json({ success: false, error: "No model selected" });
-  }
-
   try {
-    const result = await generateText({
-      model: openrouter.chat(selectedModel),
-      system: SYSTEM_PROMPT_IMAGE,
-      prompt: subtitle,
-    });
-
-    let responseText = result.text.trim();
-    let finalPrompts;
-    let entities = null;
-
-    try {
-      const parsed = JSON.parse(responseText);
-
-      if (parsed.entities && parsed.prompts) {
-        entities = parsed.entities;
-        finalPrompts = parsed.prompts.map((prompt) => {
-          let resolved = prompt;
-          for (const [placeholder, value] of Object.entries(parsed.entities)) {
-            const escapedPlaceholder = placeholder.replace(
-              /[.*+?^${}()|[\]\\]/g,
-              "\\$&",
-            );
-            resolved = resolved.replace(
-              new RegExp(escapedPlaceholder, "g"),
-              value,
-            );
-          }
-          return resolved;
-        });
-      } else if (Array.isArray(parsed)) {
-        finalPrompts = parsed;
-      } else {
-        throw new Error("Unexpected format");
-      }
-    } catch (parseError) {
-      const arrayMatch = responseText.match(/\[[\s\S]*\]/);
-      if (arrayMatch) {
-        finalPrompts = JSON.parse(arrayMatch[0]);
-      } else {
-        throw new Error("Could not parse image prompts response");
-      }
-    }
+    const { prompts, entities } = await generateImagePromptsList({ subtitle });
 
     if (projectId && entities) {
       try {
@@ -636,7 +1585,7 @@ app.post("/api/image-prompts", async (req, res) => {
       }
     }
 
-    res.json({ success: true, prompts: JSON.stringify(finalPrompts) });
+    res.json({ success: true, prompts });
   } catch (error) {
     console.error("Error generating image prompts:", error);
     res.status(500).json({ success: false, error: error.message });
@@ -646,26 +1595,9 @@ app.post("/api/image-prompts", async (req, res) => {
 app.post("/api/youtube-metadata", async (req, res) => {
   const { story, subtitle } = req.body;
 
-  if (!story && !subtitle) {
-    return res
-      .status(400)
-      .json({ success: false, error: "Story or subtitle is required" });
-  }
-
-  const selectedModel = DEFAULT_MODEL;
-  if (!selectedModel) {
-    return res.status(400).json({ success: false, error: "No model selected" });
-  }
-
   try {
-    const input = story || subtitle;
-    const result = await generateText({
-      model: openrouter.chat(selectedModel),
-      system: SYSTEM_PROMPT_YT,
-      prompt: input,
-    });
-
-    res.json({ success: true, output: result.text.trim() });
+    const output = await generateYtMetadataText({ story, subtitle });
+    res.json({ success: true, output });
   } catch (error) {
     console.error("Error generating YouTube metadata:", error);
     res.status(500).json({ success: false, error: error.message });
@@ -673,7 +1605,7 @@ app.post("/api/youtube-metadata", async (req, res) => {
 });
 
 app.post("/api/generate-images", async (req, res) => {
-  const { projectId, provider } = req.body;
+  const { projectId, provider, negativePrompt } = req.body;
 
   if (!projectId) {
     return res
@@ -687,109 +1619,17 @@ app.post("/api/generate-images", async (req, res) => {
     );
   }
 
-  const client = await getComfyClient();
-  if (!client) {
-    return res.status(400).json({
-      success: false,
-      error: "COMFY_URL not configured and no openrouter fallback",
-    });
-  }
-
   try {
-    try {
-      await fetch(`${COMFY_URL}/queue`);
-      console.log("ComfyUI connection verified");
-    } catch (connErr) {
-      console.error("ComfyUI connection test failed:", connErr.message);
-    }
-
-    const projectDir = await getProjectDir(projectId);
-    const promptsPath = path.join(projectDir, "image-prompts.json");
-    const imageDir = path.join(projectDir, "images");
-
-    await fsPromises.mkdir(imageDir, { recursive: true });
-
-    const promptsContent = await fsPromises.readFile(promptsPath, "utf8");
-    let prompts;
-    try {
-      prompts = JSON.parse(promptsContent);
-    } catch {
-      const match = promptsContent.match(/\[[\s\S]*\]/);
-      if (match) {
-        prompts = JSON.parse(match[0]);
-      } else {
-        throw new Error("Invalid prompts format");
-      }
-    }
-
-    const existingFiles = await fsPromises.readdir(imageDir);
-    const completedCount = existingFiles.filter((f) =>
-      f.endsWith(".png"),
-    ).length;
-
-    const startIndex = completedCount;
-    const totalCount = prompts.length;
-
-    if (startIndex >= totalCount) {
-      return res.json({
-        success: true,
-        message: "All images already generated",
-        completed: totalCount,
-        total: totalCount,
-      });
-    }
-
-    console.log(
-      `Generating images ${startIndex + 1} to ${totalCount} via ComfyUI...`,
-    );
-
-    for (let i = startIndex; i < totalCount; i++) {
-      const prompt = prompts[i];
-      console.log(`Generating image ${i + 1}/${totalCount}`);
-
-      try {
-        const result = await client.generateImage({
-          workflow: COMFY_WORKFLOW,
-          inputs: {
-            prompt: prompt,
-            height: 922,
-            width: 512,
-          },
-          output: {
-            type: "base64",
-          },
-        });
-
-        if (result.images && result.images[0] && result.images[0].base64) {
-          const base64Data = result.images[0].base64.split(",")[1];
-          const outputPath = path.join(imageDir, `${i + 1}.png`);
-          await fsPromises.writeFile(outputPath, base64Data, "base64");
-          console.log(`Image ${i + 1} saved to ${outputPath}`);
-        } else {
-          console.log(
-            `Image ${i + 1} result:`,
-            JSON.stringify(result).substring(0, 200),
-          );
-        }
-      } catch (err) {
-        console.error(`Error generating image ${i + 1}:`, err.message);
-        return res.status(500).json({
-          success: false,
-          error: `Failed at image ${i + 1}: ${err.message}`,
-          completed: i,
-          total: totalCount,
-        });
-      }
-    }
-
-    res.json({
-      success: true,
-      completed: totalCount,
-      total: totalCount,
-    });
+    const result = await generateImagesComfyInternal(projectId, { negativePrompt });
+    res.json({ success: true, ...result });
   } catch (error) {
     console.error("Error generating images:", error);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      completed: error.completed,
+      total: error.total,
+    });
   }
 });
 
@@ -928,111 +1768,17 @@ app.post("/api/generate-images-runpod", async (req, res) => {
       .json({ success: false, error: "Project ID is required" });
   }
 
-  if (!RUNPOD_API_KEY) {
-    return res
-      .status(400)
-      .json({ success: false, error: "RUNPOD_API_KEY not configured" });
-  }
-
   try {
-    const projectDir = await getProjectDir(projectId);
-    const promptsPath = path.join(projectDir, "image-prompts.json");
-    const imageDir = path.join(projectDir, "images");
-
-    await fsPromises.mkdir(imageDir, { recursive: true });
-
-    const promptsContent = await fsPromises.readFile(promptsPath, "utf8");
-    let prompts;
-    try {
-      prompts = JSON.parse(promptsContent);
-    } catch {
-      const match = promptsContent.match(/\[[\s\S]*\]/);
-      if (match) {
-        prompts = JSON.parse(match[0]);
-      } else {
-        throw new Error("Invalid prompts format");
-      }
-    }
-
-    const existingFiles = await fsPromises.readdir(imageDir);
-    const completedCount = existingFiles.filter((f) =>
-      f.endsWith(".png"),
-    ).length;
-
-    const startIndex = completedCount;
-    const totalCount = prompts.length;
-
-    if (startIndex >= totalCount) {
-      return res.json({
-        success: true,
-        message: "All images already generated",
-        completed: totalCount,
-        total: totalCount,
-      });
-    }
-
-    console.log(
-      `Generating images ${startIndex + 1} to ${totalCount} via RunPod...`,
-    );
-
-    for (let i = startIndex; i < totalCount; i++) {
-      const prompt = prompts[i];
-      console.log(`Generating image ${i + 1}/${totalCount}`);
-
-      try {
-        const response = await fetch(`${RUNPOD_ENDPOINT}/runsync`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${RUNPOD_API_KEY}`,
-          },
-          body: JSON.stringify({
-            input: {
-              prompt: prompt,
-              width: 512,
-              height: 922,
-            },
-          }),
-        });
-
-        if (!response.ok) {
-          const errorText = await response.text();
-          throw new Error(`RunPod API error: ${response.status} - ${errorText}`);
-        }
-
-        const data = await response.json();
-
-        if (data.output?.images?.[0]?.base64) {
-          const base64Data = data.output.images[0].base64;
-          const outputPath = path.join(imageDir, `${i + 1}.png`);
-          await fsPromises.writeFile(outputPath, base64Data, "base64");
-          console.log(`Image ${i + 1} saved to ${outputPath}`);
-        } else {
-          console.log(
-            `Image ${i + 1} result:`,
-            JSON.stringify(data).substring(0, 500),
-          );
-          throw new Error("No image in response");
-        }
-      } catch (err) {
-        console.error(`Error generating image ${i + 1}:`, err.message);
-        return res.status(500).json({
-          success: false,
-          error: `Failed at image ${i + 1}: ${err.message}`,
-          completed: i,
-          total: totalCount,
-        });
-      }
-    }
-
-    res.json({
-      success: true,
-      completed: totalCount,
-      total: totalCount,
-    });
+    const result = await generateImagesRunpodInternal(projectId);
+    res.json({ success: true, ...result });
   } catch (error) {
     console.error("Error generating images:", error);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      completed: error.completed,
+      total: error.total,
+    });
   }
 });
 
@@ -1394,38 +2140,8 @@ app.post("/api/generate-video", async (req, res) => {
       .json({ success: false, error: "Project ID is required" });
   }
 
-  if (!["ffmpeg", "remotion"].includes(renderer)) {
-    return res
-      .status(400)
-      .json({ success: false, error: "Invalid video renderer" });
-  }
-
   try {
-    const projectDir = await getProjectDir(projectId);
-    const audioPath = path.join(projectDir, "audio.wav");
-    const srtPath = path.join(projectDir, "subtitle.srt");
-    const imageDir = path.join(projectDir, "images");
-
-    if (!fs.existsSync(audioPath))
-      return res.status(400).json({ success: false, error: "Audio not found" });
-    if (!fs.existsSync(srtPath))
-      return res
-        .status(400)
-        .json({ success: false, error: "Subtitle not found" });
-    if (!fs.existsSync(imageDir))
-      return res
-        .status(400)
-        .json({ success: false, error: "Images not found" });
-
-    const images = fs.readdirSync(imageDir).filter((f) => f.endsWith(".png"));
-    if (images.length === 0)
-      return res.status(400).json({ success: false, error: "No images found" });
-
-    const renderVideo =
-      renderer === "remotion"
-        ? createStoryVideoRemotion
-        : createStoryVideoFfmpeg;
-    await renderVideo(projectId, (progress) => {
+    await renderVideoForProject(projectId, renderer, (progress) => {
       console.log(`Video generation (${renderer}):`, progress.message);
     });
 
@@ -1529,6 +2245,152 @@ app.get("/api/project/:projectId/video-status", async (req, res) => {
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
+});
+
+app.get("/api/schedule", (req, res) => {
+  const days = Math.min(Math.max(parseInt(req.query.days) || 14, 1), 90);
+  const from = req.query.from ? parseYMD(req.query.from) : new Date();
+  res.json({ success: true, slots: getSlotsForRange(from, days) });
+});
+
+app.get("/api/schedule/next", (req, res) => {
+  const count = Math.min(Math.max(parseInt(req.query.count) || 1, 1), 50);
+  const from = req.query.from ? new Date(req.query.from) : new Date();
+  if (isNaN(from.getTime())) {
+    return res.status(400).json({ success: false, error: "Invalid 'from' date" });
+  }
+  res.json({ success: true, slots: getNextAvailableSlots(count, from) });
+});
+
+app.get("/api/schedule/:slotId", (req, res) => {
+  const detail = slotDetail(req.params.slotId);
+  if (!detail) {
+    return res.status(400).json({ success: false, error: "Invalid slotId" });
+  }
+  res.json({
+    success: true,
+    slot: {
+      slotId: req.params.slotId,
+      date: detail.ymd,
+      slotKey: detail.key,
+      label: detail.slot.label,
+      booked: isSlotBooked(req.params.slotId),
+      booking: getSlotPublic(req.params.slotId),
+    },
+  });
+});
+
+app.post("/api/schedule/book", (req, res) => {
+  const { slotId } = req.body;
+  if (!slotId) {
+    return res.status(400).json({ success: false, error: "slotId is required" });
+  }
+  const result = bookSlot(slotId, req.body);
+  if (result.error) {
+    return res.status(409).json({ success: false, error: result.error, slot: result.slot });
+  }
+  res.json({ success: true, slot: result.slot });
+});
+
+app.post("/api/schedule/book-next", (req, res) => {
+  const count = Math.min(Math.max(parseInt(req.body.count) || 1, 1), 50);
+  const from = req.body.from ? new Date(req.body.from) : new Date();
+  if (isNaN(from.getTime())) {
+    return res.status(400).json({ success: false, error: "Invalid 'from' date" });
+  }
+  const avail = getNextAvailableSlots(count, from);
+  if (avail.length === 0) {
+    return res.status(409).json({ success: false, error: "No available slots found" });
+  }
+  const booked = [];
+  for (const s of avail) {
+    const result = bookSlot(s.slotId, req.body);
+    if (result.slot) booked.push(result.slot);
+  }
+  res.json({ success: true, requested: count, booked: booked.length, slots: booked });
+});
+
+app.post("/api/schedule/release", (req, res) => {
+  const { slotId } = req.body;
+  if (!slotId) {
+    return res.status(400).json({ success: false, error: "slotId is required" });
+  }
+  const result = releaseSlot(slotId);
+  if (result.error) {
+    return res.status(404).json({ success: false, error: result.error });
+  }
+  res.json({ success: true });
+});
+
+// Schedule a project's video to YouTube: picks the next free slot (or a given
+// one), books it, and triggers bot/ytPost.js in the background.
+app.post("/api/schedule/youtube", async (req, res) => {
+  const { projectId, slotId, title } = req.body || {};
+  if (!projectId) {
+    return res.status(400).json({ success: false, error: "projectId is required" });
+  }
+
+  const projectDir = path.join(STORAGE_ROOT, "projects", projectId);
+  if (!fs.existsSync(projectDir)) {
+    return res.status(404).json({ success: false, error: "Project not found" });
+  }
+  const videoFile = path.join(projectDir, "video.mp4");
+  const metaFile = path.join(projectDir, "yt-metadata.txt");
+  if (!fs.existsSync(videoFile)) {
+    return res.status(400).json({ success: false, error: "Project has no video.mp4" });
+  }
+  if (!fs.existsSync(metaFile)) {
+    return res.status(400).json({ success: false, error: "Project has no yt-metadata.txt" });
+  }
+
+  let target;
+  if (slotId) {
+    const detail = slotDetail(slotId);
+    if (!detail) {
+      return res.status(400).json({ success: false, error: "Invalid slotId" });
+    }
+    if (isSlotBooked(slotId)) {
+      return res
+        .status(409)
+        .json({ success: false, error: "Slot already booked", slot: getSlotPublic(slotId) });
+    }
+    target = { slotId, date: detail.ymd, slotKey: detail.key, label: detail.slot.label };
+  } else {
+    const avail = getNextAvailableSlots(1, new Date());
+    if (avail.length === 0) {
+      return res.status(409).json({ success: false, error: "No available slots found" });
+    }
+    const s = avail[0];
+    target = { slotId: s.slotId, date: s.date, slotKey: s.slotKey, label: s.label, at: s.at };
+  }
+
+  const slotDef = SLOTS.find((sl) => sl.key === target.slotKey);
+  const dayDate = parseYMD(target.date);
+  const slotTime = new Date(
+    dayDate.getFullYear(),
+    dayDate.getMonth(),
+    dayDate.getDate(),
+    slotDef.hour,
+    slotDef.minute,
+  );
+
+  const booked = bookSlot(target.slotId, {
+    projectId,
+    platform: "youtube",
+    title: title || projectId,
+  });
+  if (booked.error) {
+    return res.status(409).json({ success: false, error: booked.error, slot: booked.slot });
+  }
+
+  const job = triggerYtPost(projectId, target.slotId, slotTime.toISOString());
+
+  res.json({
+    success: true,
+    slot: booked.slot,
+    scheduledFor: slotTime.toISOString(),
+    post: { pid: job.pid, logFile: job.logFile, triggered: true },
+  });
 });
 
 app.listen(PORT, () => {

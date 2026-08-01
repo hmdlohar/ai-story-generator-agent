@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>One-Shot Story - Story Generator</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; max-width: 800px; margin: 0 auto; padding: 2rem; }
+    header.top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem; gap: 1rem; }
+    header.top h1 { font-size: 1.4rem; }
+    header.top a { font-size: 0.9rem; color: #2563eb; text-decoration: none; }
+    .form-group { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 1rem; }
+    label { font-weight: 600; font-size: 0.95rem; }
+    select, input[type="text"] { padding: 0.5rem; border: 1px solid #ccc; border-radius: 8px; font-size: 1rem; width: 100%; background: #fff; }
+    textarea { min-height: 160px; padding: 1rem; border: 1px solid #ccc; border-radius: 8px; font-size: 1rem; resize: vertical; width: 100%; }
+    button { padding: 1rem 2rem; background: #2563eb; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 1rem; }
+    button:hover { background: #1d4ed8; }
+    button:disabled { background: #93c5fd; cursor: not-allowed; }
+    .template-desc { color: #6b7280; font-size: 0.85rem; margin-top: -0.25rem; }
+    .error { color: #dc2626; padding: 1rem; background: #fef2f2; border-radius: 8px; margin-bottom: 1rem; }
+
+    .steps { margin-top: 1.5rem; display: none; }
+    .steps h2 { font-size: 1.1rem; margin-bottom: 0.75rem; }
+    .step { display: flex; align-items: center; gap: 0.6rem; padding: 0.5rem 0; border-bottom: 1px solid #f1f5f9; font-size: 0.95rem; }
+    .step:last-child { border-bottom: none; }
+    .step .icon { width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 0.75rem; flex-shrink: 0; background: #e5e7eb; color: #6b7280; }
+    .step.pending .icon { background: #e5e7eb; color: #9ca3af; }
+    .step.running .icon { background: #dbeafe; color: #2563eb; }
+    .step.running .icon::after { content: ""; }
+    .step.done .icon { background: #dcfce7; color: #16a34a; }
+    .step.done .icon::after { content: "\2713"; }
+    .step.error .icon { background: #fee2e2; color: #dc2626; }
+    .step.error .icon::after { content: "\2717"; }
+    .step .label { flex: 1; }
+    .step .detail { color: #6b7280; font-size: 0.85rem; }
+    .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid #bfdbfe; border-top-color: #2563eb; border-radius: 50%; animation: spin 0.8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .result { margin-top: 1.5rem; display: none; }
+    .result h2 { font-size: 1.1rem; margin-bottom: 0.75rem; }
+    .result a.btn { display: inline-block; padding: 0.5rem 1rem; background: #059669; color: #fff; border-radius: 8px; text-decoration: none; font-size: 0.9rem; margin-right: 0.5rem; }
+    .result a.btn:hover { background: #047857; }
+    .result a.btn.secondary { background: #2563eb; }
+    .result video { width: 100%; max-width: 360px; margin-top: 1rem; border-radius: 8px; }
+    .result pre { background: #f8f8f8; padding: 1rem; border-radius: 8px; white-space: pre-wrap; margin-top: 1rem; font-size: 0.85rem; }
+  </style>
+</head>
+<body>
+  <header class="top">
+    <h1>One-Shot Story Maker</h1>
+    <a href="/">&larr; Back to stories</a>
+  </header>
+
+  <div class="form-group">
+    <label for="template">Template</label>
+    <select id="template"></select>
+    <div class="template-desc" id="templateDesc"></div>
+  </div>
+
+  <div class="form-group">
+    <label for="projectId">Project ID (optional)</label>
+    <input type="text" id="projectId" placeholder="auto-generated if left blank">
+  </div>
+
+  <div class="form-group">
+    <label for="input">Story prompt / input</label>
+    <textarea id="input" placeholder="Describe the story you want... e.g. A moral story about a clever crow finding water in a pot."></textarea>
+  </div>
+
+  <button id="startBtn">Start One-Shot</button>
+
+  <div class="error" id="error" style="display:none;"></div>
+
+  <div class="steps" id="steps">
+    <h2>Pipeline progress</h2>
+    <div id="stepList"></div>
+  </div>
+
+  <div class="result" id="result">
+    <h2>Done!</h2>
+    <div id="resultActions"></div>
+    <video id="videoPlayer" controls style="display:none;"></video>
+    <pre id="ytOutput" style="display:none;"></pre>
+  </div>
+
+  <script>
+    const templateSelect = document.getElementById('template');
+    const templateDesc = document.getElementById('templateDesc');
+    const projectIdInput = document.getElementById('projectId');
+    const inputTextarea = document.getElementById('input');
+    const startBtn = document.getElementById('startBtn');
+    const errorDiv = document.getElementById('error');
+    const stepsBox = document.getElementById('steps');
+    const stepList = document.getElementById('stepList');
+    const resultBox = document.getElementById('result');
+    const resultActions = document.getElementById('resultActions');
+    const videoPlayer = document.getElementById('videoPlayer');
+    const ytOutput = document.getElementById('ytOutput');
+
+    const STEP_ORDER = ['input', 'story', 'audio', 'subtitle', 'imagePrompts', 'images', 'video', 'ytSeo'];
+    const STEP_LABELS = {
+      input: 'Save input',
+      story: 'Generate story',
+      audio: 'Text to speech',
+      subtitle: 'Generate subtitles',
+      imagePrompts: 'Generate image prompts',
+      images: 'Generate images',
+      video: 'Render video',
+      ytSeo: 'YouTube SEO',
+    };
+
+    let templates = [];
+    let lastImagesDetail = '';
+
+    function showError(msg) {
+      errorDiv.textContent = msg;
+      errorDiv.style.display = 'block';
+    }
+    function clearError() { errorDiv.style.display = 'none'; }
+
+    async function loadTemplates() {
+      try {
+        const res = await fetch('/api/templates');
+        const data = await res.json();
+        templates = data.templates || [];
+        templateSelect.innerHTML = '';
+        templates.forEach(t => {
+          const opt = document.createElement('option');
+          opt.value = t.id;
+          opt.textContent = t.name;
+          templateSelect.appendChild(opt);
+        });
+        if (templates.length === 0) {
+          showError('No templates configured. Add one in data/templates.json.');
+          startBtn.disabled = true;
+        } else {
+          updateDesc();
+        }
+      } catch (e) {
+        showError('Failed to load templates: ' + e.message);
+      }
+    }
+
+    function updateDesc() {
+      const t = templates.find(x => x.id === templateSelect.value);
+      templateDesc.textContent = t ? (t.description || '') : '';
+    }
+
+    function renderSteps() {
+      stepList.innerHTML = '';
+      STEP_ORDER.forEach(step => {
+        const el = document.createElement('div');
+        el.className = 'step pending';
+        el.dataset.step = step;
+        el.innerHTML = `<span class="icon"></span><span class="label">${STEP_LABELS[step]}</span><span class="detail"></span>`;
+        stepList.appendChild(el);
+      });
+    }
+
+    function setStep(step, status, detail) {
+      const el = stepList.querySelector(`[data-step="${step}"]`);
+      if (!el) return;
+      el.className = `step ${status}`;
+      const icon = el.querySelector('.icon');
+      icon.innerHTML = status === 'running' ? '<span class="spinner"></span>' : '';
+      const det = el.querySelector('.detail');
+      det.textContent = detail || '';
+    }
+
+    function handleEvent(ev) {
+      if (ev.type === 'progress') {
+        stepsBox.style.display = 'block';
+        if (ev.step) {
+          const detail = ev.step === 'images' && ev.total ? `${ev.completed}/${ev.total}` : '';
+          if (ev.status === 'done') {
+            setStep(ev.step, 'done', ev.step === 'images' ? lastImagesDetail : '');
+          } else {
+            setStep(ev.step, 'running', detail);
+            if (ev.step === 'images' && ev.total) lastImagesDetail = `${ev.completed}/${ev.total}`;
+          }
+        }
+      } else if (ev.type === 'done') {
+        STEP_ORDER.forEach(s => setStep(s, 'done', ''));
+        showResult(ev);
+      } else if (ev.type === 'error') {
+        showError(ev.message);
+        const running = stepList.querySelector('.step.running');
+        if (running) running.className = 'step error';
+      }
+    }
+
+    function showResult(ev) {
+      resultBox.style.display = 'block';
+      resultActions.innerHTML = '';
+      const open = document.createElement('a');
+      open.className = 'btn secondary';
+      open.href = `/story.html?projectId=${encodeURIComponent(ev.projectId)}`;
+      open.textContent = 'Open in editor';
+      resultActions.appendChild(open);
+
+      if (ev.videoUrl) {
+        const vid = document.createElement('a');
+        vid.className = 'btn';
+        vid.href = ev.videoUrl;
+        vid.textContent = 'Download video';
+        resultActions.appendChild(vid);
+        videoPlayer.src = ev.videoUrl;
+        videoPlayer.style.display = 'block';
+      }
+      if (ev.ytMetadata) {
+        ytOutput.textContent = ev.ytMetadata;
+        ytOutput.style.display = 'block';
+      }
+    }
+
+    async function streamPipeline(body) {
+      const res = await fetch('/api/one-shot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+      if (!res.ok) {
+        let msg = `HTTP ${res.status}`;
+        try { const j = await res.json(); msg = j.error || msg; } catch {}
+        throw new Error(msg);
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let idx;
+        while ((idx = buffer.indexOf('\n\n')) >= 0) {
+          const chunk = buffer.slice(0, idx);
+          buffer = buffer.slice(idx + 2);
+          const dataLine = chunk.split('\n').find(l => l.startsWith('data: '));
+          if (!dataLine) continue;
+          try { handleEvent(JSON.parse(dataLine.slice(6))); } catch (e) { console.error('parse', e); }
+        }
+      }
+    }
+
+    startBtn.addEventListener('click', async () => {
+      clearError();
+      const input = inputTextarea.value.trim();
+      if (!input) { showError('Please enter a story prompt.'); return; }
+      const templateId = templateSelect.value;
+      const projectId = projectIdInput.value.trim() || null;
+
+      startBtn.disabled = true;
+      startBtn.textContent = 'Running...';
+      resultBox.style.display = 'none';
+      stepsBox.style.display = 'block';
+      renderSteps();
+      lastImagesDetail = '';
+
+      try {
+        await streamPipeline({ templateId, input, projectId });
+      } catch (e) {
+        showError(e.message);
+      } finally {
+        startBtn.disabled = false;
+        startBtn.textContent = 'Start One-Shot';
+      }
+    });
+
+    templateSelect.addEventListener('change', updateDesc);
+    loadTemplates();
+  </script>
+</body>
+</html>

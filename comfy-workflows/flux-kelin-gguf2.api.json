@@ -3,7 +3,7 @@
     "inputs": {
       "seed": 362556020259018,
       "steps": 4,
-      "cfg": 1,
+      "cfg": 1.5,
       "sampler_name": "euler",
       "scheduler": "simple",
       "denoise": 1,
@@ -55,14 +55,15 @@
   },
   "12": {
     "inputs": {
-      "conditioning": [
-        "10",
+      "text": "lowres, low quality, worst quality, blurry, deformed, distorted, bad anatomy, wrong anatomy, extra fingers, missing fingers, mutated hands, poorly drawn hands, poorly drawn face, extra limbs, missing limbs, cloned face, disfigured, malformed, mutation, bad proportions, watermark, text, signature, logo, caption, jpeg artifacts, ugly, duplicate, glitch, error, nsfw, scary, violent, gloomy",
+      "clip": [
+        "28",
         0
       ]
     },
-    "class_type": "ConditioningZeroOut",
+    "class_type": "CLIPTextEncode",
     "_meta": {
-      "title": "ConditioningZeroOut"
+      "title": "CLIP Text Encode (Negative Prompt) {\"$map\": \"negative_prompt\"}"
     }
   },
   "14": {
