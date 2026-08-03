@@ -278,6 +278,10 @@ const SLOTS = [
 ];
 let scheduleStore = {};
 
+const AUTO_TEMPLATE_ID = process.env.AUTO_TEMPLATE_ID || "default-hindi-comfy";
+const AUTO_GENERATION_ENABLED = process.env.AUTO_GENERATION_ENABLED !== "false";
+const AUTO_POLL_INTERVAL_MS = 30 * 1000;
+
 function formatDateYMD(d) {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
@@ -452,6 +456,209 @@ function triggerYtPost(projectId, slotId, slotAtIso) {
   return { pid: child.pid, logFile };
 }
 
+// ---- Automatic daily story generation + YouTube posting ----
+// Fires at each SLOTS time (8:00 AM / 7:00 PM local). Picks the bottom-most
+// (last) pending story, generates it with AUTO_TEMPLATE_ID, then posts the
+// finished video to YouTube scheduled for the next free slot.
+let autoRunning = false;
+
+function bottomMostPendingStory() {
+  for (let i = storiesStore.length - 1; i >= 0; i--) {
+    if (storiesStore[i].status === "pending") return storiesStore[i];
+  }
+  return null;
+}
+
+function autoStartGeneration(storyId, onDone, templateId) {
+  const s = getStory(storyId);
+  if (!s) return onDone(new Error("Story not found"));
+  if (s.status === "generating") return onDone(new Error("Already generating"));
+
+  const template = loadTemplates().find((t) => t.id === (templateId || AUTO_TEMPLATE_ID));
+  if (!template) return onDone(new Error(`Unknown template ${templateId || AUTO_TEMPLATE_ID}`));
+
+  const projectId = `q-${s.id}-${Date.now()}`;
+  const input = s.about ? `${s.title}. ${s.about}` : s.title;
+
+  updateStory(s.id, {
+    status: "generating",
+    templateId: template.id,
+    projectId,
+    startedAt: Date.now(),
+    completedAt: null,
+    error: null,
+    videoUrl: null,
+    currentStep: "input",
+  });
+  storyProgress[s.id] = { step: "input", label: "Starting (auto)", completed: 0, total: 0 };
+
+  runOneShotPipeline({
+    projectId,
+    input,
+    template,
+    onProgress: (p) => {
+      if (!p || !p.step) return;
+      storyProgress[s.id] = {
+        step: p.step,
+        label: p.label || p.step,
+        completed: p.completed || 0,
+        total: p.total || 0,
+        updatedAt: Date.now(),
+      };
+    },
+  })
+    .then((result) => {
+      delete storyProgress[s.id];
+      updateStory(s.id, {
+        status: "generated",
+        completedAt: Date.now(),
+        videoUrl: result.videoUrl,
+        currentStep: "done",
+      });
+      console.log(`[auto] story '${s.id}' generated -> ${projectId}`);
+      onDone(null, { story: s, projectId });
+    })
+    .catch((err) => {
+      delete storyProgress[s.id];
+      updateStory(s.id, {
+        status: "failed",
+        error: err.message,
+        completedAt: Date.now(),
+      });
+      console.error(`[auto] story '${s.id}' failed:`, err.message);
+      onDone(err);
+    });
+}
+
+function autoPostToYoutube({ projectId, title }) {
+  const nextSlots = getNextAvailableSlots(1, new Date());
+  if (nextSlots.length === 0) {
+    throw new Error("No available YouTube slots to book");
+  }
+  const next = nextSlots[0];
+  const booked = bookSlot(next.slotId, {
+    projectId,
+    platform: "youtube",
+    title: title || projectId,
+  });
+  if (booked.error) throw new Error(`bookSlot: ${booked.error}`);
+  const job = triggerYtPost(projectId, next.slotId, next.at);
+  console.log(
+    `[auto] posting ${projectId} -> slot ${next.slotId} (${next.label}) pid=${job.pid}`,
+  );
+}
+
+async function autoTick() {
+  if (!AUTO_GENERATION_ENABLED) return;
+  if (autoRunning) return;
+
+  const now = new Date();
+  const slotId = makeSlotId(now, SLOTS.find((s) => s.hour === now.getHours() && s.minute === now.getMinutes())?.key);
+  if (!slotId || String(slotId).endsWith("undefined")) return;
+
+  // Fire only once per slot: skip if the slot is already booked (even for
+  // posting a generated video) or already past.
+  if (isSlotBooked(slotId)) return;
+  const detail = slotDetail(slotId);
+  if (!detail) return;
+  const slotTime = new Date(now.getFullYear(), now.getMonth(), now.getDate(), detail.slot.hour, detail.slot.minute);
+  if (now - slotTime > 60 * 1000) return; // only fire during the slot minute
+
+  const story = bottomMostPendingStory();
+  if (!story) {
+    console.log(`[auto] slot ${slotId} fired but no pending stories`);
+    return;
+  }
+
+  // Book the current slot immediately so a restart or second tick won't double-fire.
+  bookSlot(slotId, { platform: "auto", title: story.title, storyId: story.id });
+
+  autoRunning = true;
+  console.log(`[auto] slot ${slotId} -> generating '${story.title}' (${story.id})`);
+  autoStartGeneration(story.id, (err, result) => {
+    autoRunning = false;
+    if (err) return;
+    try {
+      autoPostToYoutube({ projectId: result.projectId, title: result.story.title });
+      if (scheduleStore[slotId]) {
+        scheduleStore[slotId].status = "posted";
+        scheduleStore[slotId].projectId = result.projectId;
+        scheduleStore[slotId].storyId = result.story.id;
+        saveSchedule();
+      }
+    } catch (e) {
+      console.error(`[auto] post step failed for slot ${slotId}:`, e.message);
+      if (scheduleStore[slotId]) {
+        scheduleStore[slotId].status = "failed";
+        scheduleStore[slotId].error = e.message;
+        saveSchedule();
+      }
+    }
+  });
+}
+
+function startAutoScheduler() {
+  // On boot, any slot left in "posting" from a pre-restart ytPost child is
+  // stuck forever; mark it failed so the slot can be re-booked manually.
+  for (const [slotId, entry] of Object.entries(scheduleStore)) {
+    if (entry && entry.status === "posting") {
+      entry.status = "failed";
+      entry.error = "Interrupted (server restarted)";
+      console.log(`[auto] marked stuck slot ${slotId} failed (posting on boot)`);
+    }
+  }
+  saveSchedule();
+
+  if (!AUTO_GENERATION_ENABLED) {
+    console.log("[auto] scheduler DISABLED (AUTO_GENERATION_ENABLED=false)");
+    return;
+  }
+  setInterval(autoTick, AUTO_POLL_INTERVAL_MS);
+  console.log(`[auto] scheduler enabled (template=${AUTO_TEMPLATE_ID}, slots=${SLOTS.map((s) => s.label).join(", ")})`);
+}
+
+// Manual trigger: same as a scheduled slot firing, but run now instead of
+// waiting for 8:00 AM / 7:00 PM. Picks the bottom-most pending story,
+// generates it with AUTO_TEMPLATE_ID, then posts it to YouTube at the next
+// free slot.
+app.post("/api/auto/generate-now", (req, res) => {
+  if (!AUTO_GENERATION_ENABLED) {
+    return res
+      .status(400)
+      .json({ success: false, error: "Auto generation is disabled (AUTO_GENERATION_ENABLED=false)" });
+  }
+  if (autoRunning) {
+    return res.status(409).json({ success: false, error: "An auto generation is already running" });
+  }
+  const { templateId } = req.body || {};
+  const template = loadTemplates().find((t) => t.id === (templateId || AUTO_TEMPLATE_ID));
+  if (!template) {
+    return res.status(400).json({ success: false, error: `Unknown template ${templateId || AUTO_TEMPLATE_ID}` });
+  }
+  const story = bottomMostPendingStory();
+  if (!story) {
+    return res.status(404).json({ success: false, error: "No pending stories in queue" });
+  }
+
+  // Book the current slot so the scheduled tick won't double-fire later.
+  const slotId = makeSlotId(new Date(), "manual");
+  bookSlot(slotId, { platform: "auto", title: story.title, storyId: story.id, manual: true });
+
+  autoRunning = true;
+  console.log(`[manual] generating '${story.title}' (${story.id}) now with template ${template.id}`);
+  autoStartGeneration(story.id, (err, result) => {
+    autoRunning = false;
+    if (err) return;
+    try {
+      autoPostToYoutube({ projectId: result.projectId, title: result.story.title });
+    } catch (e) {
+      console.error(`[manual] post step failed:`, e.message);
+    }
+  }, template.id);
+
+  res.json({ success: true, storyId: story.id, projectId: `q-${story.id}-${Date.now()}`, templateId: template.id, message: "Generation started" });
+});
+
 function getSlotsForRange(fromDate, days) {
   const out = [];
   const day = new Date(fromDate.getFullYear(), fromDate.getMonth(), fromDate.getDate());
@@ -485,6 +692,7 @@ function getSlotsForRange(fromDate, days) {
 }
 
 loadSchedule();
+startAutoScheduler();
 
 async function generateStoryText({ input, model, ssml }) {
   const selectedModel = model || DEFAULT_MODEL;

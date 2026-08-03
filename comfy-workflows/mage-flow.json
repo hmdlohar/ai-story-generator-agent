@@ -1,13 +1,13 @@
 {
   "1": {
     "inputs": {
-      "prompt": "Generate image 3: a group of forest animals: a gentle deer, a nervous monkey, a huge elephant, a colorful peacock, and a tiny squirrel, all with worried eyes and trembling postures, standing close together gathered together in a forest clearing under a giant banyan tree, with a flat mossy stone in the middle, surrounded by tree roots and green grass, soft morning light, talking seriously with worried faces, bright Indian children's book illustration style, portrait 9:16 format, no text in image, warm sunlight, rounded shapes, cheerful vibrant palette, safe for ages 3-7",
+      "prompt": "cat",
       "negative_prompt": "",
       "width": 0,
       "height": 0,
       "batch_size": 1,
       "clip": [
-        "4",
+        "11",
         0
       ],
       "vae": [
@@ -22,7 +22,7 @@
   },
   "3": {
     "inputs": {
-      "seed": 38012638478053,
+      "seed": 875395709020915,
       "steps": 4,
       "cfg": 1.5,
       "sampler_name": "euler",
@@ -100,7 +100,7 @@
   },
   "9": {
     "inputs": {
-      "unet_name": "diffusion_models/mage_flow_turbo_int8_convrot.safetensors",
+      "unet_name": "mage_flow_edit_turbo_int8_convrot.safetensors",
       "weight_dtype": "default"
     },
     "class_type": "UNETLoader",
@@ -117,6 +117,16 @@
     "class_type": "EmptyLatentImage",
     "_meta": {
       "title": "Empty Latent Image"
+    }
+  },
+  "11": {
+    "inputs": {
+      "clip_name": "qwen3vl_4b_bf16.safetensors",
+      "type": "mage"
+    },
+    "class_type": "CLIPLoaderGGUF",
+    "_meta": {
+      "title": "CLIPLoader (GGUF)"
     }
   }
 }

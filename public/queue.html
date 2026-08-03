@@ -74,6 +74,7 @@
       <button data-filter="failed">Failed</button>
     </div>
     <div class="spacer"></div>
+    <button class="btn primary" id="autoNowBtn">Generate next now</button>
     <button class="btn ok" id="startAllBtn">Start all pending</button>
   </div>
 
@@ -86,6 +87,7 @@
     const templateSelect = document.getElementById('template');
     const filtersEl = document.getElementById('filters');
     const startAllBtn = document.getElementById('startAllBtn');
+    const autoNowBtn = document.getElementById('autoNowBtn');
     const errorDiv = document.getElementById('error');
 
     const STEP_INDEX = { input: 1, story: 2, audio: 3, subtitle: 4, imagePrompts: 5, images: 6, video: 7, ytSeo: 8, done: 8 };
@@ -214,6 +216,28 @@
       const id = btn.getAttribute('data-id');
       if (btn.dataset.action === 'start') start(id);
       else if (btn.dataset.action === 'reset') reset(id);
+    });
+
+    autoNowBtn.addEventListener('click', async () => {
+      clearError();
+      autoNowBtn.disabled = true;
+      try {
+        const res = await fetch('/api/auto/generate-now', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ templateId: templateSelect.value }),
+        });
+        const data = await res.json();
+        if (!data.success) {
+          showError(data.error || 'Failed to start auto generation');
+        } else {
+          refresh();
+        }
+      } catch (e) {
+        showError(e.message);
+      } finally {
+        autoNowBtn.disabled = false;
+      }
     });
 
     startAllBtn.addEventListener('click', async () => {
