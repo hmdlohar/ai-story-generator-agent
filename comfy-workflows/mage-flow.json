@@ -2,7 +2,7 @@
   "1": {
     "inputs": {
       "prompt": "cat",
-      "negative_prompt": "",
+      "negative_prompt": "lowres, low quality, worst quality, blurry, deformed, distorted, bad anatomy, wrong anatomy, extra fingers, missing fingers, mutated hands, poorly drawn hands, poorly drawn face, extra limbs, missing limbs, cloned face, disfigured, malformed, mutation, bad proportions, watermark, text, signature, logo, caption, jpeg artifacts, ugly, duplicate, glitch, error, nsfw, scary, violent, gloomy",
       "width": 0,
       "height": 0,
       "batch_size": 1,
@@ -17,7 +17,7 @@
     },
     "class_type": "TextEncodeMageFlowEdit",
     "_meta": {
-      "title": "TextEncodeMageFlowEdit"
+      "title": "TextEncodeMageFlowEdit {\"$map\": \"prompt\"}"
     }
   },
   "3": {
@@ -110,13 +110,13 @@
   },
   "10": {
     "inputs": {
-      "width": 544,
-      "height": 1080,
+      "width": 512,
+      "height": 922,
       "batch_size": 1
     },
     "class_type": "EmptyLatentImage",
     "_meta": {
-      "title": "Empty Latent Image"
+      "title": "Empty Latent Image {\"$map\": \"width\"}"
     }
   },
   "11": {

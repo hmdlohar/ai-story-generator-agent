@@ -477,7 +477,7 @@ function autoStartGeneration(storyId, onDone, templateId) {
   const template = loadTemplates().find((t) => t.id === (templateId || AUTO_TEMPLATE_ID));
   if (!template) return onDone(new Error(`Unknown template ${templateId || AUTO_TEMPLATE_ID}`));
 
-  const projectId = `q-${s.id}-${Date.now()}`;
+  const projectId = `q-${s.id}`;
   const input = s.about ? `${s.title}. ${s.about}` : s.title;
 
   updateStory(s.id, {
@@ -656,7 +656,7 @@ app.post("/api/auto/generate-now", (req, res) => {
     }
   }, template.id);
 
-  res.json({ success: true, storyId: story.id, projectId: `q-${story.id}-${Date.now()}`, templateId: template.id, message: "Generation started" });
+  res.json({ success: true, storyId: story.id, projectId: `q-${story.id}`, templateId: template.id, message: "Generation started" });
 });
 
 function getSlotsForRange(fromDate, days) {
@@ -1312,7 +1312,7 @@ app.post("/api/stories/:id/start", async (req, res) => {
     return res.status(409).json({ success: false, error: "Already generating" });
   }
 
-  const projectId = `q-${s.id}-${Date.now()}`;
+  const projectId = `q-${s.id}`;
   const input = s.about ? `${s.title}. ${s.about}` : s.title;
 
   updateStory(s.id, {
