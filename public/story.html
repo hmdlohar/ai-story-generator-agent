@@ -33,6 +33,25 @@
     #projectSetup { background: #f0fdf4; padding: 2rem; border-radius: 8px; text-align: center; }
     #mainApp { display: none; }
     .project-badge { display: inline-block; background: #e0e7ff; padding: 0.25rem 0.75rem; border-radius: 4px; font-size: 0.875rem; margin-bottom: 1rem; }
+
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 100; }
+    .modal-overlay.show { display: flex; }
+    .modal { background: #fff; border-radius: 12px; padding: 1.5rem; max-width: 440px; width: calc(100% - 2rem); box-shadow: 0 20px 60px rgba(0,0,0,0.25); }
+    .modal h3 { font-size: 1.1rem; margin-bottom: 0.75rem; }
+    .modal .slot-info { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 0.85rem; margin: 0.75rem 0; }
+    .modal .slot-info .when { font-size: 1.05rem; font-weight: 700; color: #1e40af; }
+    .modal .slot-info .sub { font-size: 0.82rem; color: #4b5563; margin-top: 0.2rem; }
+    .modal .proj-name { font-weight: 600; color: #111827; }
+    .modal .modal-error { color: #dc2626; font-size: 0.85rem; margin-top: 0.5rem; }
+    .modal-actions { display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1rem; }
+    .modal-actions button { padding: 0.55rem 1.1rem; border-radius: 8px; border: none; font-size: 0.92rem; cursor: pointer; }
+    .btn-cancel { background: #e5e7eb; color: #374151; }
+    .btn-cancel:hover { background: #d1d5db; }
+    .btn-confirm { background: #2563eb; color: #fff; }
+    .btn-confirm:hover { background: #1d4ed8; }
+    .btn-confirm:disabled { background: #9ca3af; cursor: not-allowed; }
+    .modal.success .slot-info { background: #ecfdf5; border-color: #a7f3d0; }
+    .modal.success .slot-info .when { color: #065f46; }
   </style>
 </head>
 <body>
@@ -177,6 +196,7 @@
       </div>
       <button type="button" id="previewRemotionBtn">Preview in Remotion Studio</button>
       <button type="button" id="generateVideoBtn" class="btn-secondary">Generate Video</button>
+      <button type="button" id="scheduleVideoBtn" class="btn-secondary" disabled>📅 Schedule</button>
       <div id="videoStatus" style="margin-top: 1rem;"></div>
       <video id="videoPlayer" controls style="display: none; margin-top: 1rem; max-width: 100%;"></video>
     </div>
@@ -186,6 +206,15 @@
       <button type="button" id="ytBtn" class="btn-secondary">Generate YouTube Metadata</button>
       <div id="ytStatus" style="margin-top: 1rem;"></div>
       <div id="ytOutput" style="display: none; margin-top: 1rem;"></div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="schedModal">
+    <div class="modal" id="schedModalBox">
+      <h3 id="schedTitle">Schedule to YouTube</h3>
+      <div id="schedBody"></div>
+      <div class="modal-error" id="schedError" style="display:none;"></div>
+      <div class="modal-actions" id="schedActions"></div>
     </div>
   </div>
 
@@ -234,6 +263,15 @@
     const ytStatus = document.getElementById('ytStatus');
     const ytOutput = document.getElementById('ytOutput');
 
+    const scheduleVideoBtn = document.getElementById('scheduleVideoBtn');
+    const schedModal = document.getElementById('schedModal');
+    const schedModalBox = document.getElementById('schedModalBox');
+    const schedTitle = document.getElementById('schedTitle');
+    const schedBody = document.getElementById('schedBody');
+    const schedError = document.getElementById('schedError');
+    const schedActions = document.getElementById('schedActions');
+    let schedContext = null;
+
     function showError(msg) {
       errorDiv.textContent = msg;
       errorDiv.style.display = 'block';
@@ -242,6 +280,90 @@
     function hideError() {
       errorDiv.style.display = 'none';
     }
+
+    function escapeHtml(s) {
+      return String(s || '')
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+    }
+
+    function fmtSlot(at, label) {
+      const d = new Date(at);
+      return d.toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    }
+
+    function closeSchedModal() {
+      schedModal.classList.remove('show');
+      schedContext = null;
+    }
+
+    async function openScheduleModal() {
+      const projTitle = projectId;
+      schedContext = { projectId, title: projTitle };
+      schedModalBox.classList.remove('success');
+      schedTitle.textContent = 'Schedule to YouTube';
+      schedBody.innerHTML = `<p>Checking next available slot…</p>`;
+      schedError.style.display = 'none';
+      schedActions.innerHTML = `<button class="btn-cancel" onclick="closeSchedModal()">Cancel</button>`;
+      schedModal.classList.add('show');
+
+      try {
+        const res = await fetch('/api/schedule/next?count=1');
+        const data = await res.json();
+        if (!data.success || !data.slots.length) throw new Error(data.error || 'No available slots');
+        const slot = data.slots[0];
+        schedContext.slot = slot;
+        const when = fmtSlot(slot.at, slot.label);
+        schedBody.innerHTML = `
+          <p>Schedule <span class="proj-name">${escapeHtml(projTitle)}</span> to YouTube?</p>
+          <div class="slot-info">
+            <div class="when">${escapeHtml(when)}</div>
+            <div class="sub">Next available ${escapeHtml(slot.label)} slot · ${escapeHtml(slot.date)}</div>
+          </div>
+          <p style="font-size:0.82rem;color:#6b7280;">The video will be handed to the posting bot and marked as scheduled.</p>`;
+        schedActions.innerHTML = `
+          <button class="btn-cancel" onclick="closeSchedModal()">Cancel</button>
+          <button class="btn-confirm" onclick="confirmSchedule()">Yes, schedule</button>`;
+      } catch (e) {
+        schedBody.innerHTML = '';
+        schedError.textContent = e.message;
+        schedError.style.display = 'block';
+        schedActions.innerHTML = `<button class="btn-cancel" onclick="closeSchedModal()">Close</button>`;
+      }
+    }
+
+    async function confirmSchedule() {
+      if (!schedContext) return;
+      const btn = schedActions.querySelector('.btn-confirm');
+      if (btn) { btn.disabled = true; btn.textContent = 'Scheduling…'; }
+      schedError.style.display = 'none';
+      try {
+        const res = await fetch('/api/schedule/youtube', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId: schedContext.projectId, title: schedContext.title }),
+        });
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error || 'Schedule failed');
+        const when = fmtSlot(data.scheduledFor, data.slot.label);
+        schedModalBox.classList.add('success');
+        schedTitle.textContent = 'Scheduled!';
+        schedBody.innerHTML = `
+          <p><span class="proj-name">${escapeHtml(schedContext.title)}</span> is queued for posting.</p>
+          <div class="slot-info">
+            <div class="when">${escapeHtml(when)}</div>
+            <div class="sub">Slot ${escapeHtml(data.slot.slotId)} · status: ${escapeHtml(data.slot.status)}</div>
+          </div>`;
+        schedActions.innerHTML = `<button class="btn-confirm" onclick="closeSchedModal()">Done</button>`;
+      } catch (e) {
+        if (btn) { btn.disabled = false; btn.textContent = 'Yes, schedule'; }
+        schedError.textContent = e.message;
+        schedError.style.display = 'block';
+      }
+    }
+
+    window.closeSchedModal = closeSchedModal;
+    window.confirmSchedule = confirmSchedule;
 
     function getQueryParam(name) {
       const params = new URLSearchParams(window.location.search);
@@ -668,6 +790,7 @@
           videoStatus.textContent = 'Video generated successfully!';
           videoPlayer.src = data.videoUrl;
           videoPlayer.style.display = 'block';
+          scheduleVideoBtn.disabled = false;
           ytSection.style.display = 'block';
           loadYtMetadata();
         } else {
@@ -690,11 +813,14 @@
           videoPlayer.src = data.videoUrl;
           videoPlayer.style.display = 'block';
           videoStatus.textContent = 'Video ready';
+          scheduleVideoBtn.disabled = false;
         }
       } catch (e) {
         console.error('Failed to load video status:', e);
       }
     }
+
+    scheduleVideoBtn.addEventListener('click', openScheduleModal);
 
     async function loadYtMetadata() {
       try {

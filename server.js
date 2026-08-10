@@ -26,7 +26,7 @@ const STORAGE_ROOT = path.resolve(process.env.STORAGE_ROOT_DIR || "./storage");
 const COMFY_URL = process.env.COMFY_URL || "";
 const COMFY_WORKFLOW =
   process.env.COMFY_WORKFLOW ||
-  "/media/hyper8/HYPER/Downloads/comfy-workflows/flux-kelin-gguf2.api.json";
+  path.join(__dirname, "comfy-workflows", "flux-kelin-gguf2.api.json");
 const OPENROUTER_IMAGE_MODEL =
   process.env.OPENROUTER_IMAGE_MODEL || "black-forest-labs/flux.2-klein-4b";
 const IMAGE_WIDTH = 810;
@@ -95,6 +95,12 @@ IMPORTANT OUTPUT RULES:
 - Output only the final speakable plain text, nothing else.`;
 
 const SYSTEM_PROMPT_YT = `You analyze a provided story or SRT and create YouTube Shorts metadata optimized for discoverability among North Indian Hindi-speaking kids and their parents. You produce 2-3 catchy, safe, kid-friendly title options mixing Hindi and English, a concise description, trending hashtags, and comma-separated tags. Always include relevant, high-performing hashtags in both the description and metadata that match the story's theme, moral, or festival context. You research current YouTube Shorts and Indian kids content trends to select high-performing Hindi and Hinglish keywords, festivals, morals, and curiosity hooks, while avoiding unsafe, scary, or inappropriate phrasing. You keep language simple, positive, culturally relevant, and appealing to parents. When details are missing, infer responsibly without altering the story's meaning. Be concise, SEO-aware, and platform-specific. Use Hindi-English mix (Hinglish) by default. Do not include policy-violating or misleading claims. Your goal is to make the reel reachable to the widest audience possible. Thumbnails are not included since YouTube Shorts auto-select them.
+
+MANDATORY HASHTAG RULE:
+- Every title option MUST end with the hashtags: #moralstories #hindistories #hindi
+- The description MUST also include the hashtags #moralstories #hindistories #hindi (typically at the end of the description).
+- These three hashtags must appear in every title and in the description, without exception.
+- You may add one or two story-specific hashtags as well, but never remove or replace #moralstories, #hindistories, or #hindi.
 
 IMPORTANT: Return plain text, NOT JSON. Format the output as:
 
