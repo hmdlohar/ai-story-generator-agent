@@ -1,6 +1,12 @@
 {
   "ignore": [
     "storage/**",
+    "temp/**",
+    "public/remotion-assets/**",
+    ".claude/**",
+    "data/schedule.json",
+    "data/stories.json",
+    "data/story2-defaults.json",
     "remotion-props.json",
     "**/remotion-props.json"
   ]
