@@ -80,8 +80,10 @@ export async function prepareRemotionProject(projectId) {
   const assetRoot = path.join(process.cwd(), 'public', 'remotion-assets', publicProjectId);
   const publicAssetRoot = `remotion-assets/${publicProjectId}`;
 
+  // story2 projects carry scene timings instead of a subtitle file.
+  const timings = await fs.readFile(path.join(projectDir, 'timings.json'), 'utf8').then(JSON.parse, () => null);
   const [srtContent, imageFiles] = await Promise.all([
-    fs.readFile(srtPath, 'utf8'),
+    timings ? '' : fs.readFile(srtPath, 'utf8'),
     fs.readdir(imageDir),
   ]);
 
@@ -106,12 +108,15 @@ export async function prepareRemotionProject(projectId) {
 
   await copyFile(audioPath, path.join(assetRoot, 'audio.wav'));
 
-  const srtSegments = parseSRT(srtContent);
-  if (srtSegments.length === 0) {
+  const srtSegments = timings ? [] : parseSRT(srtContent);
+  if (!timings && srtSegments.length === 0) {
     throw new Error('No subtitle segments found for Remotion render');
   }
 
-  const scenes = srtSegments.map((segment, index) => {
+  const scenes = timings ? timings.map((t, index) => ({
+    ...t,
+    imageSrc: `${publicAssetRoot}/images/${t.image || `${index + 1}.png`}`,
+  })) : srtSegments.map((segment, index) => {
     const startMs = index === 0 ? 0 : segment.startMs;
     const endMs = index < srtSegments.length - 1
       ? srtSegments[index + 1].startMs

@@ -13,6 +13,7 @@ import { fileURLToPath } from "url";
 import https from "https";
 import ffmpeg from "fluent-ffmpeg";
 import { prepareRemotionProject } from "./scripts/remotion-data.js";
+import { registerStory2 } from "./story2.js";
 
 ffmpeg.setFfmpegPath("/usr/bin/ffmpeg");
 
@@ -1223,6 +1224,18 @@ async function runOneShotPipeline({ projectId, input, template, onProgress }) {
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 app.use(express.static(path.join(__dirname, "public")));
+
+registerStory2(app, {
+  openrouter,
+  getProjectDir,
+  getComfyClient,
+  comfyUrl: COMFY_URL,
+  comfyWorkflow: COMFY_WORKFLOW,
+  comfyEditWorkflow: path.join(__dirname, "comfy-workflows", "flux3-klein-edit_gguf.api.json"),
+  buildWavHeader,
+  createStoryVideoRemotion,
+  defaultModel: DEFAULT_MODEL,
+});
 
 // Provider's live model list, cached 1h; .env AVAILABLE_MODELS only if the provider is unreachable.
 let liveModels = { at: 0, ids: [] };

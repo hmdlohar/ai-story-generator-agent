@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Story Generator v2</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/css/tom-select.css">
+  <script src="https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/js/tom-select.complete.min.js"></script>
+  <link rel="stylesheet" href="/story2.css">
+  <style>
+    .scene { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 0.75rem; margin-bottom: 0.75rem; }
+    .scene-head { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin-bottom: 0.5rem; }
+    .scene-head .num { font-weight: 700; color: #6b7280; font-size: 0.9rem; }
+    .scene-head .emo { width: 130px; }
+    .shot { display: grid; grid-template-columns: 1fr 96px; gap: 0.6rem; padding: 0.5rem 0; border-top: 1px dashed #e5e7eb; }
+    .shot textarea.narr { font-size: 1.02rem; min-height: 2.6rem; }
+    .shot textarea.img { font-size: 0.8rem; min-height: 2.6rem; color: #374151; margin-top: 0.35rem; }
+    .shot .side { display: flex; flex-direction: column; gap: 0.35rem; align-items: center; }
+    .thumb { width: 96px; aspect-ratio: 512 / 922; background: #f3f4f6; border-radius: 8px; object-fit: cover; display: block; }
+    .thumbwrap { position: relative; }
+    .thumbwrap .spin { position: absolute; top: calc(50% - 14px); left: calc(50% - 14px); width: 28px; height: 28px; border-width: 3px; }
+    .shot-tools { display: flex; gap: 0.3rem; }
+    #sheets { display: flex; gap: 0.75rem; flex-wrap: wrap; margin: 0.6rem 0 0.25rem; }
+    .sheet { display: flex; flex-direction: column; align-items: center; gap: 0.3rem; font-size: 0.8rem; font-weight: 600; }
+    .json { font-family: ui-monospace, monospace; font-size: 0.8rem; }
+    audio { height: 36px; max-width: 100%; }
+    video { width: 100%; max-width: 360px; border-radius: 10px; display: block; margin-top: 0.75rem; }
+    #compare div { display: flex; gap: 0.75rem; align-items: center; margin-top: 0.5rem; font-size: 0.85rem; flex-wrap: wrap; }
+    #compare b { min-width: 260px; }
+  </style>
+</head>
+<body>
+  <nav class="top">
+    <a href="/story2-list.html">All v2 stories</a>
+    <a href="/story2.html">+ New story</a>
+    <a href="#" id="cloneLink">Clone idea</a>
+    <a href="/" class="right">v1</a>
+  </nav>
+  <main>
+  <h1>Story Generator v2 <span class="muted">(scenes + shots, no subtitles)</span></h1>
+  <div id="status">Ready.</div>
+
+  <section>
+    <div class="row">
+      <div><label for="projectId">Project ID</label><input type="text" id="projectId"></div>
+      <button id="loadBtn" class="alt">Load</button>
+    </div>
+    <label for="idea">Story idea</label>
+    <textarea id="idea" rows="3" placeholder="e.g. The blue jackal. A jackal falls into indigo dye and pretends to be king of the forest."></textarea>
+    <div class="row" style="margin-top:0.75rem">
+      <div><label for="model">LLM</label><select id="model" placeholder="Search models..."></select></div>
+      <div style="flex:0 0 130px;min-width:130px"><label for="secondsPerImage">Seconds per image</label><input type="number" id="secondsPerImage" value="4" min="2" max="10" step="0.5"></div>
+      <label class="check"><input type="checkbox" id="review" checked> Editor review pass</label>
+      <label class="check" title="One reference image per character keeps characters on-model across shots. Images take ~2x longer."><input type="checkbox" id="useSheets" checked> Use character sheets</label>
+    </div>
+    <div class="row">
+      <button id="scriptBtn" class="job">Write script</button>
+      <button id="everythingBtn" class="job alt">Generate everything</button>
+    </div>
+  </section>
+
+  <section>
+    <h2 style="margin-top:0">Voice</h2>
+    <div class="row">
+      <div><label for="ttsModel">TTS model</label><select id="ttsModel"></select></div>
+      <div><label for="voice">Voice</label><input type="text" id="voice" list="voices"><datalist id="voices"></datalist></div>
+      <div style="flex:0 0 110px;min-width:110px"><label for="pause">Pause (ms)</label><input type="number" id="pause" value="300" step="50"></div>
+    </div>
+    <div class="row">
+      <label class="check"><input type="checkbox" id="tags" checked> Emotion tags (fish: "(excited)", gemini: "[excited]")</label>
+    </div>
+    <div class="row">
+      <div><label for="previewText">Preview text</label><input type="text" id="previewText" value="अरे सुनो सुनो! जंगल में हुआ एकदम फिल्मी कांड!"></div>
+      <button id="previewBtn" class="small">Preview</button>
+      <button id="compareBtn" class="small alt">Compare all models</button>
+    </div>
+    <div id="compare"></div>
+  </section>
+
+  <section id="scriptSection" style="display:none">
+    <div class="row">
+      <div><label for="title">Title</label><input type="text" id="title"></div>
+      <button id="saveBtn" class="job small alt">Save script</button>
+      <span class="muted" id="savedAt"></span>
+    </div>
+    <label for="characters">Characters (JSON) <span class="muted">each gets a reference sheet below</span></label>
+    <textarea id="characters" class="json" rows="5"></textarea>
+    <div id="sheets"></div>
+    <label for="places" style="margin-top:0.6rem">Places (JSON)</label>
+    <textarea id="places" class="json" rows="3"></textarea>
+    <h2>Scenes <span class="muted" id="sceneStats"></span></h2>
+    <p class="muted" style="margin-bottom:0.6rem">Each scene is voiced as one clip; its shots split that clip into images by text length.</p>
+    <div id="scenes"></div>
+    <div class="row">
+      <button id="ttsAllBtn" class="job">Voice scenes</button>
+      <button id="imgAllBtn" class="job">Images</button>
+      <button id="videoBtn" class="job">Render video</button>
+      <button id="restBtn" class="job alt">Voice + images + video</button>
+    </div>
+    <label class="check" style="margin-bottom:0.5rem"><input type="checkbox" id="force"> Redo unchanged scenes too (Voice scenes / Images)</label>
+    <p class="muted" style="margin-bottom:0.75rem">Runs on the server: refreshing or closing this page doesn't stop it. Scenes whose text/voice or image prompt didn't change are skipped; the per-scene and per-shot buttons always redo.</p>
+    <audio id="fullAudio" controls style="display:none;width:100%"></audio>
+    <video id="video" controls style="display:none"></video>
+  </section>
+  </main>
+
+<script>
+const TTS_MODELS = [
+  { id: "google/gemini-3.8-flash-lite-tts", label: "Gemini 3.8 Flash Lite TTS (≈$0.009/story)", voices: ["Zephyr", "Puck", "Kore", "Leda", "Aoede", "Charon", "Fenrir"] },
+  { id: "fish-audio/drama-3", label: "Fish Audio Drama 3 (≈$0.002/story)", voices: [""] },
+  { id: "fish-audio/s2.1-pro", label: "Fish Audio S2.1 Pro (≈$0.012/story)", voices: [""] },
+  { id: "google/gemini-3.8-flash-tts", label: "Gemini 3.8 Flash TTS (≈$0.013/story)", voices: ["Zephyr", "Puck", "Kore", "Leda", "Aoede", "Charon", "Fenrir"] },
+  { id: "google/gemini-3.1-flash-tts-preview", label: "Gemini 3.1 Flash TTS — current v1 (≈$0.03/story)", voices: ["zephyr", "puck", "kore", "leda"] },
+  { id: "microsoft/mai-voice-2.1-flash", label: "Microsoft MAI Voice 2.1 Flash (≈$0.012/story)", voices: ["hi-IN-SwaraNeural", "hi-IN-MadhurNeural"] },
+  { id: "hexgrad/kokoro-82m", label: "Kokoro 82M (≈$0.0005/story)", voices: ["hf_alpha", "hf_beta", "hm_omega", "hm_psi"] },
+];
+const EMOTIONS = ["excited", "happy", "curious", "surprised", "whispering", "sad", "scared", "laughing", "calm"];
+const $ = (id) => document.getElementById(id);
+const params = new URLSearchParams(location.search);
+let script = null;
+let state = null; // last GET /api/v2/project/:id
+let pollTimer = null;
+
+function status(msg, err) { $("status").textContent = msg; $("status").className = err ? "err" : ""; }
+const pid = () => $("projectId").value.trim();
+const newId = () => `s2-${new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "")}`;
+const ttsOpts = () => ({ model: $("ttsModel").value, voice: $("voice").value.trim(), tags: $("tags").checked });
+const wavUrl = (b64) => URL.createObjectURL(new Blob([Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))], { type: "audio/wav" }));
+const fileUrl = (name, t) => `/api/v2/project/${pid()}/file/${name}?t=${t}`;
+const sceneEl = (n) => $("scenes").children[n - 1];
+const shotEl = (n, j) => sceneEl(n)?.querySelectorAll(".shot")[j - 1];
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+
+async function api(method, url, body) {
+  const r = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: body && JSON.stringify(body) });
+  const data = await r.json().catch(() => ({ success: false, error: `HTTP ${r.status}` }));
+  if (!data.success) throw new Error(data.error || "Request failed");
+  return data;
+}
+
+// Runs a button action; errors go to the status bar.
+async function act(fn) {
+  try { await fn(); } catch (e) { status(e.message, true); }
+}
+
+// Job buttons are locked while a server job runs for this project.
+function lock(on) {
+  document.querySelectorAll("button.job").forEach((b) => (b.disabled = on));
+}
+
+function setVoices() {
+  const m = TTS_MODELS.find((t) => t.id === $("ttsModel").value);
+  $("voices").innerHTML = m.voices.map((v) => `<option value="${v}">`).join("");
+  $("voice").value = m.voices[0];
+  $("voice").placeholder = m.voices[0] ? "" : "default voice";
+}
+
+function settings() {
+  return { input: $("idea").value.trim(), model: $("model").value, review: $("review").checked, useSheets: $("useSheets").checked, secondsPerImage: Number($("secondsPerImage").value), tts: ttsOpts(), pauseMs: Number($("pause").value) };
+}
+
+// Server sends this project's settings, or the last-used defaults for a new project.
+function applySettings(st) {
+  if (!st) return;
+  if (st.model) setModel(st.model);
+  if (st.input !== undefined && !$("idea").value) $("idea").value = st.input;
+  if (st.review !== undefined) $("review").checked = st.review;
+  if (st.useSheets !== undefined) $("useSheets").checked = st.useSheets;
+  if (st.secondsPerImage) $("secondsPerImage").value = st.secondsPerImage;
+  if (st.pauseMs) $("pause").value = st.pauseMs;
+  if (st.tts?.model && TTS_MODELS.some((t) => t.id === st.tts.model)) {
+    $("ttsModel").value = st.tts.model;
+    setVoices();
+    $("voice").value = st.tts.voice || "";
+    $("tags").checked = st.tts.tags !== false;
+  }
+}
+
+function renderScript() {
+  $("scriptSection").style.display = "";
+  $("title").value = script.title || "";
+  $("characters").value = JSON.stringify(script.characters || {}, null, 2);
+  $("places").value = JSON.stringify(script.places || {}, null, 2);
+  $("sheets").innerHTML = Object.keys(script.characters || {}).map((c) => `
+    <div class="sheet" data-char="${esc(c)}">
+      <div class="thumbwrap"><img class="thumb" alt="${esc(c)} sheet"><span class="spin sheet-spin" title="Drawing sheet..."></span></div>
+      <span>${esc(c)}</span>
+      <button class="small alt job" title="Redraw this character's sheet; then redo Images so shots use it">Redo sheet</button>
+    </div>`).join("");
+  $("sheets").querySelectorAll(".sheet").forEach((el) => (el.querySelector("button").onclick = () => startJob(["sheets"], undefined, undefined, { character: el.dataset.char })));
+  if (script.input) $("idea").value = script.input;
+  const shots = script.scenes.reduce((a, sc) => a + sc.shots.length, 0);
+  const words = script.scenes.flatMap((sc) => sc.shots.map((sh) => sh.text)).join(" ").split(/\s+/).length;
+  $("sceneStats").textContent = `(${script.scenes.length} scenes, ${shots} images, ${words} words)`;
+  $("scenes").innerHTML = "";
+  script.scenes.forEach((sc, i) => {
+    const n = i + 1;
+    const el = document.createElement("div");
+    el.className = "scene";
+    el.innerHTML = `
+      <div class="scene-head">
+        <span class="num">Scene ${n}</span>
+        <select class="emo">${EMOTIONS.map((e) => `<option>${e}</option>`).join("")}</select>
+        <button class="small job" data-voice>Voice</button>
+        <span class="spin voice-spin" title="Voicing..."></span>
+        <audio controls style="display:none"></audio>
+      </div>
+      ${sc.shots.map((sh, j) => `
+      <div class="shot">
+        <div>
+          <textarea class="narr">${esc(sh.text)}</textarea>
+          <textarea class="img">${esc(sh.image)}</textarea>
+        </div>
+        <div class="side">
+          <div class="thumbwrap"><img class="thumb" alt="Scene ${n} shot ${j + 1}"><span class="spin img-spin" title="Generating image..."></span></div>
+          <div class="shot-tools">
+            <button class="small alt job" data-img="${j + 1}" title="Redo this image">Image</button>
+            <button class="small job" data-split="${j + 1}" title="Split this shot in two">+</button>
+            ${sc.shots.length > 1 ? `<button class="small job" data-del="${j + 1}" title="Remove this shot (its text is merged into the neighbouring one)">−</button>` : ""}
+          </div>
+        </div>
+      </div>`).join("")}`;
+    el.querySelector(".emo").value = EMOTIONS.includes(sc.emotion) ? sc.emotion : "happy";
+    el.querySelector("[data-voice]").onclick = () => startJob(["voice"], n);
+    el.querySelectorAll("[data-img]").forEach((b) => (b.onclick = () => startJob(["images"], n, Number(b.dataset.img))));
+    el.querySelectorAll("[data-split]").forEach((b) => (b.onclick = () => act(() => editShots(n, Number(b.dataset.split), "split"))));
+    el.querySelectorAll("[data-del]").forEach((b) => (b.onclick = () => act(() => editShots(n, Number(b.dataset.del), "del"))));
+    $("scenes").appendChild(el);
+  });
+}
+
+// Split a shot in two (text halved at a word boundary) or merge it into its neighbour, then save.
+async function editShots(n, j, op) {
+  script = collectScript();
+  const shots = script.scenes[n - 1].shots;
+  const sh = shots[j - 1];
+  if (op === "split") {
+    const words = sh.text.split(/\s+/);
+    const half = Math.ceil(words.length / 2);
+    shots.splice(j - 1, 1, { text: words.slice(0, half).join(" "), image: sh.image }, { text: words.slice(half).join(" ") || "…", image: sh.image });
+  } else {
+    const into = shots[j - 2] || shots[j];
+    into.text = j > 1 ? `${into.text} ${sh.text}` : `${sh.text} ${into.text}`;
+    shots.splice(j - 1, 1);
+  }
+  await api("PUT", `/api/v2/project/${pid()}/script`, { script });
+  state = null;
+  await refresh();
+  status(`Scene ${n} shots updated. Edit the image prompts, then run Voice scenes (re-times audio) and Images.`);
+}
+
+// Apply server state; only touch media whose file mtime changed.
+function apply(r) {
+  const prev = state;
+  state = r;
+  let fresh = !prev;
+  if (!r.script) {
+    $("scriptSection").style.display = "none";
+  } else if (r.scriptMtime !== prev?.scriptMtime) {
+    script = r.script;
+    renderScript();
+    fresh = true;
+  }
+  r.sceneAudio.forEach((t, i) => {
+    if (!t || (!fresh && t === prev.sceneAudio[i])) return;
+    const a = sceneEl(i + 1).querySelector("audio");
+    a.src = fileUrl(`scene-${i + 1}.wav`, t);
+    a.style.display = "";
+  });
+  r.shotImages.forEach((shots, i) => shots.forEach((t, j) => {
+    if (t && (fresh || t !== prev.shotImages[i]?.[j])) shotEl(i + 1, j + 1).querySelector(".thumb").src = `/api/project/${pid()}/images/${i + 1}-${j + 1}.png?t=${t}`;
+  }));
+  const sheetEl = (c) => [...$("sheets").children].find((el) => el.dataset.char === c);
+  Object.entries(r.sheets || {}).forEach(([c, t]) => {
+    if (t && (fresh || t !== prev.sheets?.[c])) sheetEl(c)?.querySelector(".thumb").setAttribute("src", `/api/project/${pid()}/images/${c.replace(/[^\w-]/g, "").replace(/^/, "char-")}.png?t=${t}`);
+  });
+  if (r.audio && (fresh || r.audio !== prev.audio)) { $("fullAudio").src = fileUrl("audio.wav", r.audio); $("fullAudio").style.display = ""; }
+  if (r.video && (fresh || r.video !== prev.video)) { $("video").src = fileUrl("video.mp4", r.video); $("video").style.display = ""; }
+
+  const job = r.job;
+  document.querySelectorAll(".spin.on").forEach((el) => el.classList.remove("on"));
+  const cur = job?.running && job.current;
+  if (cur?.kind === "voice") sceneEl(cur.n)?.querySelector(".voice-spin").classList.add("on");
+  if (cur?.kind === "image") shotEl(cur.n, cur.shot)?.querySelector(".img-spin").classList.add("on");
+  if (cur?.kind === "sheet") sheetEl(cur.character)?.querySelector(".sheet-spin").classList.add("on");
+  if (!prev) applySettings(r.settings);
+  lock(!!job?.running);
+  if (job?.running) status(`Working: ${job.label}`);
+  else if (job) status(job.error ? job.label : `Done (${job.steps.join(" + ")}${job.scene ? `, scene ${job.scene}` : ""}).`, !!job.error);
+  else if (!prev) status(r.script ? `Loaded ${pid()}.` : "New project. Write a script to start.");
+}
+
+async function refresh() {
+  clearTimeout(pollTimer);
+  if (!pid()) throw new Error("Project ID is required");
+  history.replaceState(null, "", `?id=${encodeURIComponent(pid())}`);
+  const r = await api("GET", `/api/v2/project/${pid()}`);
+  apply(r);
+  if (r.job?.running) pollTimer = setTimeout(() => act(refresh), 2000);
+}
+
+function collectScript() {
+  const json = (id, label) => { try { return JSON.parse($(id).value || "{}"); } catch { throw new Error(`${label} JSON is invalid`); } };
+  return {
+    ...script,
+    title: $("title").value,
+    characters: json("characters", "Characters"),
+    places: json("places", "Places"),
+    scenes: [...$("scenes").children].map((el) => ({
+      emotion: el.querySelector(".emo").value,
+      shots: [...el.querySelectorAll(".shot")].map((s) => ({
+        text: s.querySelector(".narr").value.trim(),
+        image: s.querySelector(".img").value.trim(),
+      })),
+    })),
+  };
+}
+
+async function saveScript() {
+  clearTimeout(scriptTimer);
+  if (!script) return;
+  script = collectScript();
+  const r = await api("PUT", `/api/v2/project/${pid()}/script`, { script });
+  if (state) state.scriptMtime = r.scriptMtime; // our own save: don't re-render under the cursor
+  $("savedAt").textContent = `saved ${new Date().toLocaleTimeString()}`;
+}
+
+async function saveSettings() {
+  clearTimeout(settingsTimer);
+  await api("PUT", `/api/v2/project/${pid()}/settings`, settings());
+}
+
+// Auto-save: script edits and settings go to the server ~1s after you stop typing.
+let scriptTimer = null;
+let settingsTimer = null;
+const later = (fn, t) => { clearTimeout(t); return setTimeout(() => act(fn), 1000); };
+["input", "change"].forEach((ev) => {
+  $("scriptSection").addEventListener(ev, (e) => {
+    if (e.target.matches("textarea, input[type=text], select")) scriptTimer = later(saveScript, scriptTimer);
+  });
+  ["idea", "model", "review", "useSheets", "secondsPerImage", "ttsModel", "voice", "tags", "pause"].forEach((id) =>
+    $(id).addEventListener(ev, () => (settingsTimer = later(saveSettings, settingsTimer))));
+});
+
+function startJob(steps, scene, shot, extra = {}) {
+  return act(async () => {
+    const st = settings();
+    clearTimeout(settingsTimer);
+    if (!steps.includes("script")) await saveScript();
+    else if (!st.input) throw new Error("Write a story idea first");
+    lock(true);
+    await api("POST", `/api/v2/project/${pid()}/run`, { ...st, ...extra, steps, scene, shot, force: $("force").checked });
+    await refresh();
+  }).finally(() => !state?.job?.running && lock(false));
+}
+
+$("ttsModel").innerHTML = TTS_MODELS.map((t) => `<option value="${t.id}">${t.label}</option>`).join("");
+$("ttsModel").onchange = setVoices;
+setVoices();
+
+// Searchable model picker; create:true allows a model id that isn't listed.
+const modelPicker = new TomSelect("#model", { create: true, maxOptions: null, sortField: [{ field: "$order" }, { field: "$score" }] });
+function setModel(m) {
+  modelPicker.addOption({ value: m, text: m });
+  modelPicker.setValue(m, true);
+}
+fetch("/api/models").then((r) => r.json()).then((d) => {
+  modelPicker.addOptions(d.models.map((m) => ({ value: m, text: m })));
+  if (!modelPicker.getValue()) setModel(d.default);
+});
+
+$("projectId").value = params.get("id") || newId();
+
+$("cloneLink").onclick = (e) => {
+  e.preventDefault();
+  act(async () => {
+    await saveSettings();
+    const r = await api("POST", `/api/v2/project/${pid()}/clone`);
+    location.href = `/story2.html?id=${encodeURIComponent(r.id)}`;
+  });
+};
+$("loadBtn").onclick = () => act(() => { state = null; $("idea").value = ""; return refresh(); });
+$("saveBtn").onclick = () => act(async () => { await saveScript(); state = null; await refresh(); status("Script saved."); });
+$("scriptBtn").onclick = () => startJob(["script"]);
+$("everythingBtn").onclick = () => startJob(["script", "voice", "images", "video"], undefined, undefined, { keepScript: true });
+$("ttsAllBtn").onclick = () => startJob(["voice"]);
+$("imgAllBtn").onclick = () => startJob(["images"]);
+$("videoBtn").onclick = () => startJob(["video"]);
+$("restBtn").onclick = () => startJob(["voice", "images", "video"]);
+
+$("previewBtn").onclick = () => act(async () => {
+  status(`Previewing ${$("ttsModel").value}...`);
+  const r = await api("POST", "/api/v2/tts-preview", { ...ttsOpts(), text: $("previewText").value, emotion: "excited" });
+  new Audio(wavUrl(r.audio)).play();
+  status(`Preview: ${(r.durationMs / 1000).toFixed(1)}s.`);
+});
+
+$("compareBtn").onclick = () => act(async () => {
+  $("compare").innerHTML = "";
+  await Promise.all(TTS_MODELS.map(async (m) => {
+    const row = document.createElement("div");
+    row.innerHTML = `<b>${m.label}</b><span class="muted">working...</span>`;
+    $("compare").appendChild(row);
+    try {
+      const r = await api("POST", "/api/v2/tts-preview", { model: m.id, voice: m.voices[0], tags: $("tags").checked, text: $("previewText").value, emotion: "excited" });
+      row.lastChild.replaceWith(Object.assign(document.createElement("audio"), { controls: true, src: wavUrl(r.audio) }));
+    } catch (err) { row.lastChild.textContent = err.message; }
+  }));
+});
+
+act(refresh);
+</script>
+</body>
+</html>
