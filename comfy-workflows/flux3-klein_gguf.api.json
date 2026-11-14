@@ -1,0 +1,194 @@
+{
+  "9": {
+    "inputs": {
+      "filename_prefix": "image_flux3_klein_distilled_t2i",
+      "images": [
+        "18:8",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image {\"$map\": \"output\"}"
+    }
+  },
+  "19": {
+    "inputs": {
+      "aspect_ratio": "9:16 (Portrait Widescreen)",
+      "megapixels": 0.5,
+      "multiple": 8
+    },
+    "class_type": "ResolutionSelector",
+    "_meta": {
+      "title": "Resolution Selector"
+    }
+  },
+  "18:17": {
+    "inputs": {
+      "value": "Generate image 7: a young Indian shepherd boy, age 10, short black hair, round face, big brown eyes, brown skin tone, wearing a white kurta and a red lungi, barefoot, holding a crooked wooden staff standing terrified, shouting towards the village, while a gray wolf, medium sized, yellow eyes, sharp white teeth, a long bushy tail, walking on four legs, with a sly expression, drawn in a child-friendly cartoony style emerges from behind a bush, with a flock of white sheep with black faces, fluffy wool, some grazing, some standing alert, with gentle expressions scattering in fear, and the same pasture as $scene1 but in the golden hour of early evening, sky orange and golden, long shadows, a tranquil atmosphere as the evening pasture background, bright Indian children's book illustration style, portrait 9:16 format, no text in image, warm sunlight, rounded shapes, cheerful vibrant palette, safe for ages 3-7"
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "Text (Multiline) {\"$map\": \"prompt\"}"
+    }
+  },
+  "18:14": {
+    "inputs": {
+      "value": "You are the prompt upsampler of a text-to-image model. Expand the user's short request into ONE detailed, self-contained caption: the exact text the image model receives. Output only the caption, with no greetings, explanations, refusals, questions, Markdown, headings, JSON, coordinates, ids or angle-bracket tokens, and no quotes around it. If the input is not clearly an image request, caption a visualization of its concept. The request may begin with a \"TARGET CANVAS: W:H\" line: compose for that canvas (wide spreads content sideways, tall stacks it) and never mention the ratio or the canvas.\n\nFidelity and planning: keep every explicit subject, attribute, count, spatial constraint, style cue and piece of wording; never contradict, substitute, drop or narrow the request, and keep an abstract concept abstract. Decide everything left open as ONE concrete, consistent plan; never offer alternatives or hedge. Never re-express a stated constraint through another mechanism; add camera optics (depth of field, bokeh, blur) only when asked for or implied. Without a stated style, plan an actual photograph and open with the medium convention (\"Full-color outdoor photograph, ...\", \"Full-color indoor photograph, ...\", \"Studio photograph, ...\", \"Close-up photograph, ...\"); keep \"Photorealistic\" for renders, and turn \"photorealistic\" or \"realistic\" requests for photos into the photograph convention. Give a photograph a few ordinary, non-ideal specifics drawn from the scene's own objects instead of the stock-photo ideal. Do not invent names, brands, logos or celebrities; keep user-named ones. A long request keeps its content but not its wording: drop appraisal and sales vocabulary, turn moods into observable physical facts, and add only new concrete content with positions. Time of day is lighting, not rendered text.\n\nCaption format: one continuous prose block in the generative voice, never \"this image shows\", \"we can see\" or \"is visible\". Lead with medium and style, then scene, lighting and camera, then the subjects with concrete colors, materials and state. Every person in focus gets an observable profile: ethnicity, gender, age range, skin tone (\"fair skin\", \"brown skin\"), hair and clothing. Make the layout reconstructable from words: frame-relative positions (frame-left, frame-right, upper, lower, foreground, midground, background), sentence-initial anchors (\"On the left, ...\", \"In the background, ...\"), relations (holds, faces, behind) and a consistent order; describe up to about ten instances one by one, beyond that give the exact count and arrangement. Out-of-focus or distant planes are shapes, colors and silhouettes, never identities or readable text, and the background takes about a sixth of the caption. Be definite: no hedging adverbs, no quality or emotion judgments, no closing sentence about mood; state negations as what is present. Rendered text: transcribe every wording verbatim inside double quotes in its original language and script, keep the line breaks of multi-line text, and give its typography, color and placement; author concrete, domain-correct wording when the request needs text it does not supply, and name canonical structures (calendar, keyboard, periodic table) exactly with their full layout. All prose is English; only quoted text keeps its language. Typical length is 100 to 350 words, more for complex scenes.\n\nOutput only the caption.\n"
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "Text (System prompt)"
+    }
+  },
+  "18:4": {
+    "inputs": {
+      "text": [
+        "18:13",
+        0
+      ],
+      "clip": [
+        "18:2",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "Positive Prompt"
+    }
+  },
+  "18:2": {
+    "inputs": {
+      "clip_name": "qwen3vl_4b_int8_convrot.safetensors",
+      "type": "flux3",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "18:7": {
+    "inputs": {
+      "seed": 298223661828237,
+      "steps": 4,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1,
+      "model": [
+        "18:25",
+        0
+      ],
+      "positive": [
+        "18:4",
+        0
+      ],
+      "negative": [
+        "18:5",
+        0
+      ],
+      "latent_image": [
+        "18:6",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "18:3": {
+    "inputs": {
+      "vae_name": "flux2-vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "18:13": {
+    "inputs": {
+      "source": [
+        "18:16",
+        0
+      ]
+    },
+    "class_type": "PreviewAny",
+    "_meta": {
+      "title": "Preview as Text"
+    }
+  },
+  "18:16": {
+    "inputs": {
+      "switch": false,
+      "on_false": [
+        "18:17",
+        0
+      ],
+      "on_true": [
+        "18:14",
+        0
+      ]
+    },
+    "class_type": "ComfySwitchNode",
+    "_meta": {
+      "title": "If/Else Switch"
+    }
+  },
+  "18:6": {
+    "inputs": {
+      "width": [
+        "19",
+        0
+      ],
+      "height": [
+        "19",
+        1
+      ],
+      "batch_size": 1
+    },
+    "class_type": "EmptyFlux2LatentImage",
+    "_meta": {
+      "title": "Empty Flux 2 Latent {\"$map\": {\"width\": \"width\", \"height\": \"height\"}}"
+    }
+  },
+  "18:5": {
+    "inputs": {
+      "text": "",
+      "clip": [
+        "18:2",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "Negative Prompt (empty = reference default)"
+    }
+  },
+  "18:8": {
+    "inputs": {
+      "samples": [
+        "18:7",
+        0
+      ],
+      "vae": [
+        "18:3",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "18:25": {
+    "inputs": {
+      "unet_name": "flux3_image_klein_sd_Q4_K_M.gguf"
+    },
+    "class_type": "UnetLoaderGGUF",
+    "_meta": {
+      "title": "Unet Loader (GGUF)"
+    }
+  }
+}
