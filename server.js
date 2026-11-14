@@ -41,8 +41,15 @@ const AVAILABLE_MODELS = (process.env.AVAILABLE_MODELS || "")
 const DEFAULT_MODEL = AVAILABLE_MODELS[0] || "";
 
 const openrouter = createOpenAI({
-  apiKey: process.env.OPENROUTER_API_KEY,
-  baseURL: process.env.OPENROUTER_BASE_URL || "https://opencode.ai/zen/v1",
+  apiKey: process.env.LLM_API_KEY,
+  baseURL: process.env.LLM_BASE_URL || "http://localhost:20128/v1",
+  // 9router answers non-streaming openrouter/* calls as text/event-stream: padded JSON + "data: [DONE]".
+  fetch: async (url, init) => {
+    const res = await fetch(url, init);
+    if (!res.headers.get("content-type")?.includes("event-stream") || /"stream"\s*:\s*true/.test(init?.body || "")) return res;
+    const body = (await res.text()).replace(/data: \[DONE\]\s*$/, "").trim();
+    return new Response(body, { status: res.status, headers: { "content-type": "application/json" } });
+  },
 });
 
 const sarvamClient = process.env.SARVAM_API_KEY
@@ -1217,8 +1224,21 @@ app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 app.use(express.static(path.join(__dirname, "public")));
 
-app.get("/api/models", (req, res) => {
-  res.json({ models: AVAILABLE_MODELS, default: DEFAULT_MODEL });
+// Provider's live model list, cached 1h; .env AVAILABLE_MODELS only if the provider is unreachable.
+let liveModels = { at: 0, ids: [] };
+app.get("/api/models", async (req, res) => {
+  let live = liveModels.ids;
+  if (Date.now() - liveModels.at > 3600_000) try {
+    const r = await fetch(`${process.env.LLM_BASE_URL || "http://localhost:20128/v1"}/models`, {
+      headers: { Authorization: `Bearer ${process.env.LLM_API_KEY}` },
+      signal: AbortSignal.timeout(5000),
+    });
+    live = (await r.json()).data.map((m) => m.id);
+    liveModels = { at: Date.now(), ids: live };
+  } catch (e) {
+    console.warn("Model list fetch failed:", e.message);
+  }
+  res.json({ models: live.length ? live : AVAILABLE_MODELS, default: DEFAULT_MODEL });
 });
 
 app.get("/api/templates", (req, res) => {
