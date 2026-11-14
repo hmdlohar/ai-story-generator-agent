@@ -52,46 +52,6 @@ function Scene({ scene }) {
   );
 }
 
-function Subtitles({ scenes }) {
-  const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
-  const currentScene = scenes.find((scene) => {
-    const startFrame = Math.round((scene.startMs / 1000) * fps);
-    const endFrame = Math.round((scene.endMs / 1000) * fps);
-    return frame >= startFrame && frame < endFrame;
-  });
-
-  if (!currentScene?.text) {
-    return null;
-  }
-
-  return (
-    <AbsoluteFill
-      style={{
-        justifyContent: 'flex-end',
-        alignItems: 'center',
-        padding: '0 72px 150px',
-        pointerEvents: 'none',
-      }}
-    >
-      <div
-        style={{
-          color: 'white',
-          fontFamily: '"Noto Sans Devanagari", "Mukta", sans-serif',
-          fontSize: 58,
-          fontWeight: 800,
-          lineHeight: 1.2,
-          textAlign: 'center',
-          textShadow: '0 4px 16px rgba(0,0,0,0.9), 0 1px 2px rgba(0,0,0,1)',
-          WebkitTextStroke: '1px rgba(0,0,0,0.5)',
-        }}
-      >
-        {currentScene.text}
-      </div>
-    </AbsoluteFill>
-  );
-}
-
 export function StoryVideo({ audioSrc, scenes = [] }) {
   return (
     <AbsoluteFill style={{ backgroundColor: '#111' }}>
@@ -99,7 +59,6 @@ export function StoryVideo({ audioSrc, scenes = [] }) {
         <Scene key={`${scene.startMs}-${index}`} scene={scene} />
       ))}
       {audioSrc ? <Audio src={staticFile(audioSrc)} /> : null}
-      <Subtitles scenes={scenes} />
     </AbsoluteFill>
   );
 }
